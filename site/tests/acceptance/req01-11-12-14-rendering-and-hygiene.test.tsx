@@ -3,7 +3,7 @@
  * REQ 12: secrets and sensitive content are not exposed (source and route level).
  * REQ 1 and REQ 14: demo labeling and displayed inputs, responses, criteria, metadata, limitations (server markup).
  */
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -174,10 +174,13 @@ describe("REQ 12: secrets and sensitive content (source and route)", () => {
     }
   });
 
+  // Generic secret patterns (no vendor names): env-var-style key names, key-like tokens, and env reads.
+  const SECRET_PATTERNS: RegExp[] = [/\b[A-Z][A-Z0-9_]*_API_KEY\b/, /\bsk-[A-Za-z0-9]{8,}/, /process\.env/, /API_KEY/];
+
   it("the stub route returns no env-var names or values and does not echo the request", async () => {
     const saved = { ...process.env };
-    process.env.ANTHROPIC_API_KEY = "sk-ant-api03-ROUTESECRET";
-    process.env.OPENAI_API_KEY = "sk-ROUTESECRET2";
+    process.env.LAB_CANARY_API_KEY = "sk-labcanaryROUTESECRET";
+    process.env.LAB_CANARY_SECRET = "sk-labcanary2ROUTESECRET";
     try {
       const post = POST as unknown as (req: Request) => Promise<Response>;
       const res = await post(
@@ -189,13 +192,31 @@ describe("REQ 12: secrets and sensitive content (source and route)", () => {
       );
       expect(res.status).toBe(503);
       const body = await res.text();
-      for (const bad of ["ROUTESECRET", "ANTHROPIC", "OPENAI", "API_KEY", "ECHO-CANARY", "HEADER-CANARY", "process.env"]) {
+      for (const bad of ["ROUTESECRET", "labcanary", "LAB_CANARY", "ECHO-CANARY", "HEADER-CANARY"]) {
         expect(body).not.toContain(bad);
       }
+      for (const re of SECRET_PATTERNS) expect(body).not.toMatch(re);
       expect(JSON.parse(body).status).toBe("credentials_unavailable");
       expect(body).toMatch(/not an evaluation result/i);
     } finally {
       process.env = saved;
+    }
+  });
+
+  // Runs only after `npm run build` has produced the client bundle.
+  const STATIC = join(SITE, ".next", "static");
+  function allFiles(dir: string): string[] {
+    return readdirSync(dir).flatMap((n) => {
+      const p = join(dir, n);
+      return statSync(p).isDirectory() ? allFiles(p) : [p];
+    });
+  }
+  it.skipIf(!existsSync(STATIC))("the built client bundle contains no env-var key names, key-like tokens, or env reads", () => {
+    const js = allFiles(STATIC).filter((f) => /\.(js|mjs|css|json|txt|map)$/.test(f));
+    expect(js.length).toBeGreaterThan(0);
+    for (const f of js) {
+      const src = readFileSync(f, "utf8");
+      for (const re of SECRET_PATTERNS) expect(src, `${f} matches ${re}`).not.toMatch(re);
     }
   });
 });

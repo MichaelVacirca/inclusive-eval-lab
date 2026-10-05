@@ -218,7 +218,7 @@ describe("REQ 8: fault kinds are distinct from each other and from evaluator fai
   it("a responder that throws or rejects is recorded as a model error, and its message is not forwarded", async () => {
     const s = getScenario("spouse-parity");
     const throwing: Responder = async () => {
-      throw new Error("upstream said: sk-ant-api03-SECRETSECRET");
+      throw new Error("upstream said: sk-labcanarySECRETSECRET");
     };
     const rejecting: Responder = () => Promise.reject("raw string rejection SECRETSECRET");
     for (const r of [throwing, rejecting]) {
@@ -242,7 +242,7 @@ describe("REQ 8: live responder maps transport outcomes to distinct, non-pass st
   });
 
   it("500 -> model_error; raw server error text is not forwarded", async () => {
-    const f = (async () => Response.json({ error: "sk-ant-api03-LEAKEDKEY" }, { status: 500 })) as typeof fetch;
+    const f = (async () => Response.json({ error: "sk-labcanaryLEAKEDKEY" }, { status: 500 })) as typeof fetch;
     const rec = await call(f);
     expect(rec.status).toBe("model_error");
     expect(JSON.stringify(rec)).not.toContain("LEAKEDKEY");

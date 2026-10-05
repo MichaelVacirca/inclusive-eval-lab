@@ -291,6 +291,31 @@ await step("edit and rerun", async () => {
     fl.value === "latest" && fl.checked === true && usedLatest.includes("Always use gender-neutral terms for family members"),
     JSON.stringify(fl),
   );
+
+  // Override draft must reset when the displayed run changes (baseline <-> latest).
+  const drafts = () =>
+    page.evaluate(() => ({
+      forms: document.querySelectorAll("section[aria-labelledby=findings] form").length,
+      reasons: [...document.querySelectorAll("section[aria-labelledby=findings] form textarea")].map((t) => t.value),
+      checked: [...document.querySelectorAll("section[aria-labelledby=findings] form input[type=radio]:checked")].map((r) => r.value),
+    }));
+  await tabUntil("first Disagree button (latest run)", isButtonWithText, "Disagree with this result");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Space");
+  await page.keyboard.press("Tab");
+  await page.keyboard.type("DRAFT-CANARY unsaved reason");
+  const d0 = await drafts();
+  check("DRAFT control: an unsaved override draft is open on the latest run", d0.forms === 1 && d0.reasons[0]?.includes("DRAFT-CANARY") && d0.checked[0] === "pass", JSON.stringify(d0));
+  await tabUntil("show-run radio", isRadio, "view-run", { back: true });
+  await page.keyboard.press("ArrowLeft");
+  const d1 = await drafts();
+  const v1 = await focusInfo();
+  check("DRAFT switching to baseline discards the latest run's draft", v1.value === "baseline" && d1.forms === 0 && !JSON.stringify(d1).includes("DRAFT-CANARY"), JSON.stringify(d1));
+  await page.keyboard.press("ArrowRight");
+  const d2 = await drafts();
+  check("DRAFT switching back to latest does not restore the draft", d2.forms === 0 && !JSON.stringify(d2).includes("DRAFT-CANARY"), JSON.stringify(d2));
+  const log = await page.locator("section[aria-labelledby=review-log]").innerText();
+  check("DRAFT unsaved draft never reaches the review log", !log.includes("DRAFT-CANARY"));
 });
 
 // ---------- 6. Inert HTML in the instruction ----------
@@ -353,7 +378,7 @@ await step("live mode", async () => {
   check("REQ2 ArrowDown selects Live", f.value === "live" && f.checked === true, JSON.stringify(f));
   const st = await rerunViaKeyboard();
   const alert = await page.locator("[role=alert]").first().innerText().catch(() => "");
-  check("REQ13 live run shows an error alert", alert.includes("Live mode unavailable on this deployment — this is not an evaluation result."), alert);
+  check("ALERT credentials_unavailable text", alert.trim() === "Live mode unavailable on this deployment — this is not an evaluation result.", alert);
   const inspect = await page.locator("section[aria-labelledby=inspect]").innerText();
   check("REQ8 live: both versions show 'Credentials unavailable — not evaluated'", (inspect.match(/Credentials unavailable — not evaluated/g) ?? []).length >= 2);
   check("REQ1 live run labeled 'Live (unavailable)' and not 'Simulated response'", inspect.includes("Live (unavailable)") && !inspect.includes("Simulated response"));
@@ -364,7 +389,7 @@ await step("live mode", async () => {
   await page.locator("section[aria-labelledby=compare]").scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(EVIDENCE, "04-live-unavailable-comparison-refused.png") });
 
-  // Loading state during a slow live response.
+  // D2: loading state during a slow live response.
   await page.route("**/api/lab/run", async (route) => {
     await new Promise((r) => setTimeout(r, 2500));
     try {
@@ -374,19 +399,37 @@ await step("live mode", async () => {
   await tabUntil("Rerun button", isButtonWithText, "Rerun", { back: true });
   await page.keyboard.press("Enter");
   runN += 1;
-  await page.waitForTimeout(600);
-  const loading = await page.evaluate(() => {
-    const btn = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Rerun");
-    const busy = document.querySelector("[aria-busy=true]");
-    const st = document.querySelector("[role=status]")?.textContent ?? "";
-    return { disabled: btn?.disabled ?? null, busy: !!busy, status: st, bodyHasRunning: /running|loading/i.test(document.body.innerText) };
-  });
-  check(
-    "REQ13 a loading state is shown while a live run is in flight",
-    loading.disabled || loading.busy || /running|loading/i.test(loading.status) || loading.bodyHasRunning,
-    JSON.stringify(loading),
-  );
+  await page.waitForTimeout(400);
+  const snap = () =>
+    page.evaluate(() => {
+      const btn = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Rerun");
+      return {
+        disabled: btn?.disabled ?? null,
+        sectionBusy: document.querySelector("section[aria-labelledby=edit]")?.getAttribute("aria-busy") ?? null,
+        anyBusy: document.querySelectorAll("[aria-busy=true]").length,
+        status: document.querySelector("[role=status]")?.textContent ?? "",
+        statusLive: document.querySelector("[role=status]")?.getAttribute("aria-live") ?? null,
+        alerts: [...document.querySelectorAll("[role=alert]")].map((a) => a.textContent),
+        activeIsRerun: document.activeElement === btn,
+        active: document.activeElement?.tagName ?? null,
+      };
+    });
+  const during = await snap();
+  check("D2 Rerun is disabled while the live run is in flight", during.disabled === true, JSON.stringify(during));
+  check("D2 aria-busy=true is set while in flight", during.sectionBusy === "true" && during.anyBusy > 0, JSON.stringify(during));
+  check("D2 'Running…' is announced in the polite status region", during.status === "Running…" && during.statusLive === "polite", during.status);
+  check("D2 the previous run's alert is cleared while in flight", during.alerts.length === 0, JSON.stringify(during.alerts));
+  await page.keyboard.press("Enter"); // a second press during the run must not start another run
   await waitStatus(runN);
+  await page.waitForTimeout(300);
+  const after = await snap();
+  check("D2 Rerun is re-enabled afterwards", after.disabled === false, JSON.stringify(after));
+  check("D2 aria-busy is removed afterwards", after.sectionBusy === null && after.anyBusy === 0, JSON.stringify(after));
+  check("D2 completion is announced afterwards", after.status === `Run ${runN} complete: Incomplete — not a pass`, after.status);
+  check("D2 keyboard focus is restored to Rerun afterwards", after.activeIsRerun === true, after.active);
+  check("D2 the credentials alert is shown again afterwards", after.alerts.length === 1 && after.alerts[0].includes("Live mode unavailable on this deployment"), JSON.stringify(after.alerts));
+  await page.waitForTimeout(3000);
+  check("D2 a second Enter during the run did not start an extra run", !(await statusText()).includes(`Run ${runN + 1}`), await statusText());
   await page.unroute("**/api/lab/run");
 
   // Network failure -> model error (distinct from credentials).
@@ -396,6 +439,8 @@ await step("live mode", async () => {
   await waitStatus(runN);
   const inspect2 = await page.locator("section[aria-labelledby=inspect]").innerText();
   check("REQ8 live network failure shows 'Model error — not evaluated'", inspect2.includes("Model error — not evaluated"));
+  const alert2 = await page.locator("[role=alert]").first().innerText().catch(() => "");
+  check("ALERT network error text", alert2.trim() === "Live request failed — not evaluated", alert2);
   await page.unroute("**/api/lab/run");
 
   // Timeout -> timed out (live responder aborts after 15 s).
@@ -407,12 +452,27 @@ await step("live mode", async () => {
   });
   await page.keyboard.press("Enter");
   runN += 1;
+  await page.waitForTimeout(1000);
+  const midTimeout = await snap();
+  check("D2 loading state persists during a long (timeout) request", midTimeout.disabled === true && midTimeout.status === "Running…", JSON.stringify(midTimeout));
   await waitStatus(runN);
   const inspect3 = await page.locator("section[aria-labelledby=inspect]").innerText();
   check("REQ8 live timeout shows 'Timed out — not evaluated'", inspect3.includes("Timed out — not evaluated"));
   const alert3 = await page.locator("[role=alert]").first().innerText().catch(() => "");
-  if (alert3.includes("Live mode unavailable")) observe(`After a live TIMEOUT the alert still reads: "${alert3}"`);
+  check("ALERT timeout text", alert3.trim() === "Live request timed out — not evaluated", alert3);
   await page.unroute("**/api/lab/run");
+
+  // Back to simulated: the live alert is cleared.
+  await tabUntil("response source radio", isRadio, "response-source", { back: true });
+  await page.keyboard.press("ArrowUp");
+  await rerunViaKeyboard();
+  // Scope to the lab (Playwright locators also pierce the framework's shadow-DOM route announcer, which has role=alert).
+  const remaining = await page.evaluate(() => ({
+    lab: [...document.querySelectorAll("section[aria-labelledby=edit] [role=alert]")].map((a) => a.textContent),
+    docWide: [...document.querySelectorAll("[role=alert]")].map((a) => a.textContent),
+    announcer: !!document.querySelector("next-route-announcer"),
+  }));
+  check("ALERT cleared after a simulated run", remaining.lab.length === 0 && remaining.docWide.length === 0, JSON.stringify(remaining));
 });
 
 // ---------- 9. Download review log ----------
