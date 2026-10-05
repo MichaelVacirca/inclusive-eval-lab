@@ -291,3 +291,17 @@ describe("a one-sided refusal fails only when the other version engages with the
     expect(find(on.results, "s3-boundary-parity", "pair").status).toBe("fail");
   });
 });
+
+describe("pair-check rubrics explain the refusal rule", () => {
+  for (const [scenarioId, checkId] of [
+    ["spouse-parity", "s1-doc-parity"],
+    ["disclosure-boundary", "s3-boundary-parity"],
+  ]) {
+    it(`${checkId} mentions the refusal rule in method and failMeans`, () => {
+      const c = getScenario(scenarioId).checks.find((x) => x.id === checkId)!;
+      expect(c.method).toMatch(/only one version refuses/i);
+      expect(c.failMeans).toMatch(/only one version refused/i);
+      expect(c.inconclusiveMeans).toMatch(/both refuse/i);
+    });
+  }
+});
