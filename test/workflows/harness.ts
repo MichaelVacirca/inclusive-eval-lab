@@ -1,16 +1,21 @@
 // Test harness for the shell steps in .github/workflows/*.yml and
 // action/action.yml. It runs the real `run:` scripts from the YAML with
 // bash, the way the Actions runner does, but with npm/npx/node and the
-// eval CLI replaced by stubs that only record how they were called.
+// eval CLI replaced by stubs that only record how they were called. Spies
+// record calls the same way but still run the real host program.
 
 import { spawnSync } from "node:child_process";
 import {
+  accessSync,
   chmodSync,
+  constants,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
+  statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -157,6 +162,9 @@ export interface Sandbox {
 
 export const STUB_PROGS = ["npm", "npx", "node"] as const;
 
+/** Host directories runStep puts on PATH after the sandbox's bin. */
+export const SYSTEM_PATH = ["/usr/bin", "/bin"] as const;
+
 export function makeSandbox(): Sandbox {
   const root = mkdtempSync(join(tmpdir(), "wf-test-"));
   const sb: Sandbox = {
@@ -207,6 +215,62 @@ function shQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
+/** The host program runStep's PATH would find after the sandbox's bin. */
+export function hostProgram(prog: string): string {
+  for (const dir of SYSTEM_PATH) {
+    const path = join(dir, prog);
+    try {
+      accessSync(path, constants.X_OK);
+      if (statSync(path).isFile()) return path;
+    } catch {
+      // not in this directory
+    }
+  }
+  throw new Error(`"${prog}" not found in ${SYSTEM_PATH.join(":")}`);
+}
+
+/**
+ * Put a spy for a host program in the sandbox's bin: it records the call
+ * like a stub, then runs the real program with the same arguments, stdin
+ * and working directory, and exits with its status. A non-zero
+ * STUB_EXIT_<PROG> fails the call without running the real program.
+ */
+export function writeSpy(sb: Sandbox, prog: string): void {
+  const real = hostProgram(prog);
+  const recorder = join(dirname(sb.bin), "spies", prog);
+  writeStub(sb, recorder, prog);
+  // The recorder looks up find and wc on PATH, so it gets the host's PATH
+  // rather than one where they could be spies themselves.
+  const script = [
+    "#!/bin/bash",
+    `PATH=${shQuote(SYSTEM_PATH.join(":"))} ${shQuote(recorder)} "$@" </dev/null >/dev/null || exit`,
+    `exec ${shQuote(real)} "$@"`,
+    "",
+  ].join("\n");
+  writeFileSync(join(sb.bin, prog), script);
+  chmodSync(join(sb.bin, prog), 0o755);
+}
+
+/**
+ * A PATH for runStep's extraEnv with the named host programs hidden: the
+ * sandbox's bin first (its stubs and spies still win), then links to
+ * everything else in SYSTEM_PATH. Use it to run a step as if the machine
+ * lacked a program that this one happens to have.
+ */
+export function pathWithout(sb: Sandbox, hidden: string[]): string {
+  const dir = mkdtempSync(join(dirname(sb.bin), "host-"));
+  const linked = new Set<string>();
+  for (const sys of SYSTEM_PATH) {
+    if (!existsSync(sys)) continue;
+    for (const name of readdirSync(sys)) {
+      if (hidden.includes(name) || linked.has(name)) continue;
+      symlinkSync(join(sys, name), join(dir, name));
+      linked.add(name);
+    }
+  }
+  return `${sb.bin}:${dir}`;
+}
+
 function readCalls(sb: Sandbox): Call[] {
   return readdirSync(sb.log)
     .filter((f) => f.endsWith(".argv"))
@@ -235,7 +299,7 @@ export function runStep(
     cwd: sb.work,
     encoding: "utf8",
     env: {
-      PATH: `${sb.bin}:/usr/bin:/bin`,
+      PATH: [sb.bin, ...SYSTEM_PATH].join(":"),
       HOME: sb.work,
       RUNNER_TEMP: sb.runnerTemp,
       ...env,
