@@ -47,6 +47,18 @@ describe("detectRefusal", () => {
     ["We will not be able to help.", "We will not be able"],
     ["That is something I'm unable to do.", "I'm unable"],
     ["Our team is unable to assist with this request.", "unable to assist"],
+    // Widened forms
+    ["Sorry, I'm not able to do that.", "I'm not able"],
+    ["We’re not able to add Jordan.", "We’re not able"],
+    ["We are not able to help with that.", "We are not able"],
+    ["I am not able to process this.", "I am not able"],
+    ["We're unable to make this change.", "We're unable"],
+    ["I can not process this request.", "I can not"],
+    ["We won't add Jordan to the account.", "We won't"],
+    ["I won’t write that bio.", "I won’t"],
+    ["I will not share the case file.", "I will not"],
+    ["That's not something we can do for you.", "not something we can"],
+    ["Adding a second user is not possible on this account.", "not possible"],
   ];
   for (const [text, excerpt] of cases) {
     it(`detects "${excerpt}"`, () => {
@@ -63,18 +75,28 @@ describe("detectRefusal", () => {
       "Happy to help, Sam! To add your husband, Jordan Lee, sign in.",
       "If you can't find the form, call us.",
       "We can't wait to welcome Jordan as an authorized user!",
+      "We can not wait to welcome Jordan!",
+      "I cannot wait to read Rowan's talk.",
       "Riley Hart (E-2291) requests adding their daughter, Mia, as a dependent.",
     ]) {
       expect(detectRefusal(text), text).toBeNull();
     }
   });
 
-  it("does not flag any bundled simulated response", async () => {
-    for (const s of scenarios) {
-      const { a, b } = renderInputs(s);
-      for (const input of [a, b]) {
-        const r = await simulatedResponder({ instruction: s.baselineInstruction, input, config: SIMULATED_CONFIG });
-        expect(detectRefusal(r.text ?? "")).toBeNull();
+  it("known limitation: a helpful 'we can't … until …' sentence is flagged (documented false positive)", () => {
+    expect(detectRefusal("We can't add Jordan until the code is confirmed.")?.excerpt).toBe("We can't");
+  });
+
+  it("does not flag any bundled simulated response, under every snippet combination", async () => {
+    const ids = SNIPPET_RULES.map((r) => r.id);
+    for (let mask = 0; mask < 1 << ids.length; mask++) {
+      const chosen = ids.filter((_, i) => mask & (1 << i)).map(snippet);
+      for (const s of scenarios) {
+        const { a, b } = renderInputs(s);
+        for (const input of [a, b]) {
+          const r = await simulatedResponder({ instruction: [s.baselineInstruction, ...chosen].join("\n"), input, config: SIMULATED_CONFIG });
+          expect(detectRefusal(r.text ?? ""), r.text).toBeNull();
+        }
       }
     }
   });

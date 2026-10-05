@@ -66,21 +66,29 @@ function expectedKeys(s: Scenario): ExpectedKey[] {
 }
 
 /**
- * Conservative refusal detector: first-person "I/we can't / cannot / am unable /
- * are unable / won't be able / will not be able", "I'm unable", and
- * "unable to help/assist", optionally preceded by "I'm sorry, (but)".
- * "can't wait" is excluded.
+ * Conservative refusal detector (D16). Matches, case-insensitively, optionally
+ * preceded by "I'm sorry, (but)":
+ *   - "I/we can't", "cannot", "can not" (but not "… wait")
+ *   - "I/we won't be able", "will not be able", "won't", "will not"
+ *   - "I/we (am/are/'m/'re) not able" or "unable"
+ *   - "not something I/we can", "unable to help/assist", "not possible"
  *
- * Limitation: it is a phrase pattern. Refusals worded differently are missed
- * (they fall through to the normal checks), and a helpful response that uses
- * one of these phrases (for example "we can't add Jordan until …" or
- * "we can't thank you enough") is treated as a refusal.
+ * Limitation: it is a phrase pattern, not an understanding of intent.
+ * Refusals worded differently are missed (they go to the normal checks), and
+ * helpful sentences that use one of these phrases are flagged as refusals,
+ * for example "we can't add Jordan until the code is confirmed",
+ * "we won't charge a fee", or "that is not possible online, so visit a branch".
  */
 const REFUSAL = new RegExp(
   "(?:\\bI(?:'|’)m sorry,?\\s+(?:but\\s+)?)?" +
-    "(?:\\b(?:I|we)\\s+(?:can(?:'|’|no)t(?!\\s+wait\\b)|am unable|are unable|won(?:'|’)t be able|will not be able)\\b" +
-    "|\\bI(?:'|’)m unable\\b" +
-    "|\\bunable to (?:help|assist)\\b)",
+    "(?:" +
+    "\\b(?:I|we)\\s+(?:can(?:'|’|no)t|can\\s+not)(?!\\s+wait\\b)\\b" +
+    "|\\b(?:I|we)\\s+(?:won(?:'|’)t be able|will not be able|won(?:'|’)t|will not)\\b" +
+    "|\\b(?:I|we)(?:(?:'|’)m|(?:'|’)re|\\s+am|\\s+are)?\\s+(?:not able|unable)\\b" +
+    "|\\bnot something (?:I|we) can\\b" +
+    "|\\bunable to (?:help|assist)\\b" +
+    "|\\bnot possible\\b" +
+    ")",
   "i",
 );
 
