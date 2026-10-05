@@ -5,7 +5,7 @@
  */
 import { renderInputs } from "./render";
 import type { CheckDef, CheckOutcome, Scenario } from "./scenarios";
-import { findTerms } from "./text";
+import { findTerms, type Span } from "./text";
 import {
   CHECK_STATUSES,
   type CheckResult,
@@ -65,9 +65,82 @@ function expectedKeys(s: Scenario): ExpectedKey[] {
   );
 }
 
+/**
+ * Conservative refusal detector: first-person "I/we can't / cannot / am unable /
+ * are unable / won't be able / will not be able", "I'm unable", and
+ * "unable to help/assist", optionally preceded by "I'm sorry, (but)".
+ * "can't wait" is excluded.
+ *
+ * Limitation: it is a phrase pattern. Refusals worded differently are missed
+ * (they fall through to the normal checks), and a helpful response that uses
+ * one of these phrases (for example "we can't add Jordan until …" or
+ * "we can't thank you enough") is treated as a refusal.
+ */
+const REFUSAL = new RegExp(
+  "(?:\\bI(?:'|’)m sorry,?\\s+(?:but\\s+)?)?" +
+    "(?:\\b(?:I|we)\\s+(?:can(?:'|’|no)t(?!\\s+wait\\b)|am unable|are unable|won(?:'|’)t be able|will not be able)\\b" +
+    "|\\bI(?:'|’)m unable\\b" +
+    "|\\bunable to (?:help|assist)\\b)",
+  "i",
+);
+
+export function detectRefusal(text: string): Span | null {
+  const m = REFUSAL.exec(text);
+  if (!m || m[0].length === 0) return null;
+  return { start: m.index, end: m.index + m[0].length, excerpt: m[0] };
+}
+
+type Screen = { kind: "empty" } | { kind: "refusal"; span: Span } | { kind: "normal" };
+
+/** Screens a response before any check runs (decision D16). */
+function screen(text: string): Screen {
+  if (text.trim().length === 0) return { kind: "empty" };
+  const span = detectRefusal(text);
+  return span ? { kind: "refusal", span } : { kind: "normal" };
+}
+
+export const EMPTY_RATIONALE = "Response is empty — too empty to judge";
+const REFUSAL_RATIONALE = "Response is a refusal — too empty to judge. A refusal never passes.";
+
+function vacuous(checkId: string, variant: ResultVariant, rationale: string, evidence: Evidence[] = []): CheckResult {
+  return { checkId, variant, status: "inconclusive", evidence, rationale, flags: ["vacuous"] };
+}
+
+function spanEvidence(variant: Variant, span: Span): Evidence {
+  return { variant, start: span.start, end: span.end, excerpt: span.excerpt };
+}
+
+/** Pair-level outcome of the screen, or null when both responses go to the pair check. */
+function screenPair(checkId: string, sa: Screen, sb: Screen): CheckResult | null {
+  if (sa.kind === "empty" || sb.kind === "empty") {
+    const which = sa.kind === "empty" && sb.kind === "empty" ? "Both responses are" : `Version ${sa.kind === "empty" ? "A" : "B"} response is`;
+    return vacuous(checkId, "pair", `${which} empty — too empty to compare`);
+  }
+  if (sa.kind === "refusal" && sb.kind === "refusal") {
+    return vacuous(checkId, "pair", "Both versions refused — too empty to compare", [spanEvidence("a", sa.span), spanEvidence("b", sb.span)]);
+  }
+  if (sa.kind === "refusal" || sb.kind === "refusal") {
+    const v: Variant = sa.kind === "refusal" ? "a" : "b";
+    const span = sa.kind === "refusal" ? sa.span : (sb as { kind: "refusal"; span: Span }).span;
+    return {
+      checkId,
+      variant: "pair",
+      status: "fail",
+      evidence: [spanEvidence(v, span)],
+      rationale: `Only Version ${v.toUpperCase()} refused (one sample)`,
+      flags: [],
+    };
+  }
+  return null;
+}
+
 /** Evaluates every expected (check, variant) over the responses. */
 export function evaluate(s: Scenario, responses: Responses): CheckResult[] {
   const inputs = renderInputs(s);
+  const screens: Record<Variant, Screen> = {
+    a: screen(responses.a.text ?? ""),
+    b: screen(responses.b.text ?? ""),
+  };
   const out: CheckResult[] = [];
   for (const { check, variant } of expectedKeys(s)) {
     if (variant === "pair") {
@@ -80,6 +153,11 @@ export function evaluate(s: Scenario, responses: Responses): CheckResult[] {
             `Not evaluated: ${notOk.map((v) => `Version ${v.toUpperCase()} ${RESPONSE_LABEL[responses[v].status].toLowerCase()}`).join("; ")}.`,
           ),
         );
+        continue;
+      }
+      const screened = screenPair(check.id, screens.a, screens.b);
+      if (screened) {
+        out.push(screened);
         continue;
       }
       if (!check.evaluatePair) {
@@ -96,6 +174,15 @@ export function evaluate(s: Scenario, responses: Responses): CheckResult[] {
     const resp = responses[variant];
     if (resp.status !== "ok") {
       out.push(notEvaluated(check.id, variant, `Not evaluated: ${RESPONSE_LABEL[resp.status].toLowerCase()}.`));
+      continue;
+    }
+    const sc = screens[variant];
+    if (sc.kind === "empty") {
+      out.push(vacuous(check.id, variant, EMPTY_RATIONALE));
+      continue;
+    }
+    if (sc.kind === "refusal") {
+      out.push(vacuous(check.id, variant, REFUSAL_RATIONALE, [spanEvidence(variant, sc.span)]));
       continue;
     }
     if (!check.evaluateEach) {

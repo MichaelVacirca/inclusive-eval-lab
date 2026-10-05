@@ -289,6 +289,10 @@ export function Findings({
       <p className="text-sm text-zinc-400">
         Provenance labels come from word matching against the user&apos;s input; they do not identify who a word refers to.
       </p>
+      <p className="text-sm text-zinc-400">
+        Before the checks run, an empty response or a refusal (detected by a fixed phrase pattern) makes that version&apos;s checks
+        inconclusive; if only one version refuses, the pair checks fail.
+      </p>
       {run.validationNotes.length > 0 && (
         <ul className="list-disc pl-5 text-sm text-zinc-400">
           {run.validationNotes.map((n, i) => (
