@@ -43,6 +43,19 @@ function rangeFloor(range: string): string {
   return parts.join(".");
 }
 
+/**
+ * True only for an exact x.y.z[-pre] version, the form npm saves with --save-exact. Ranges such as ^4.3.2 would let a
+ * lockfile refresh move to 4.3.3, whose default sans font stack visibly changes the site.
+ */
+function isExactPin(spec: string): boolean {
+  try {
+    parseVersion(spec);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function installedVersion(name: string): string {
   // Read the hoisted copy directly: these packages' "exports" maps do not expose ./package.json.
   const pkg = JSON.parse(readFileSync(join(SITE, "node_modules", name, "package.json"), "utf8")) as { version?: unknown };
@@ -79,6 +92,23 @@ describe("Tailwind CSS is at or above the DEP0205 fix (4.3.1)", () => {
     }
   });
 
+  it("package.json pins tailwindcss and @tailwindcss/postcss exactly, to the same version the lockfile resolves", () => {
+    const pkg = JSON.parse(readFileSync(join(SITE, "package.json"), "utf8")) as {
+      devDependencies?: Record<string, string>;
+    };
+    const lock = JSON.parse(readFileSync(join(SITE, "package-lock.json"), "utf8")) as {
+      packages: Record<string, { version?: string; devDependencies?: Record<string, string> }>;
+    };
+    const pinned = ["@tailwindcss/postcss", "tailwindcss"].map((name) => {
+      const spec = pkg.devDependencies?.[name] ?? "";
+      expect(isExactPin(spec), `${name}: ${JSON.stringify(spec)} is not an exact version`).toBe(true);
+      expect(lock.packages[`node_modules/${name}`]?.version, `${name} in package-lock.json`).toBe(spec);
+      expect(lock.packages[""]?.devDependencies?.[name], `${name} in the lockfile's root entry`).toBe(spec);
+      return spec;
+    });
+    expect(pinned[0], "tailwindcss and @tailwindcss/postcss pinned to the same version").toBe(pinned[1]);
+  });
+
   it("loading @tailwindcss/node emits no module.register() deprecation (DEP0205)", () => {
     // A fresh process, so the warning is not hidden by one already emitted in this worker.
     // NODE_OPTIONS is cleared so an inherited --no-deprecation cannot make this pass vacuously.
@@ -92,6 +122,18 @@ describe("Tailwind CSS is at or above the DEP0205 fix (4.3.1)", () => {
     expect(child.status, child.stderr).toBe(0);
     expect(child.stderr).not.toContain("DEP0205");
     expect(child.stderr).not.toMatch(/module\.register\(\)` is deprecated/);
+  });
+});
+
+describe("isExactPin: only an exact version counts as a pin", () => {
+  it("accepts exact versions, including prereleases", () => {
+    for (const v of ["4.3.2", "0.0.0", "10.20.30", "4.3.2-beta.1"]) expect(isExactPin(v), v).toBe(true);
+  });
+
+  it("rejects ranges, partial versions, tags and empty input", () => {
+    for (const v of ["^4.3.2", "~4.3.2", ">=4.3.2", "4.3.x", "4.3", "4", "*", "latest", "v4.3.2", " 4.3.2", "", "4.3.2 || 4.3.3"]) {
+      expect(isExactPin(v), JSON.stringify(v)).toBe(false);
+    }
   });
 });
 
