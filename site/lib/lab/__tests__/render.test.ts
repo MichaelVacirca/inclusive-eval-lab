@@ -6,7 +6,7 @@ describe("scenarios", () => {
   it("bundles three scenarios in a fixed order", () => {
     expect(scenarios.map((s) => s.id)).toEqual(["spouse-parity", "stated-identity", "disclosure-boundary"]);
     for (const s of scenarios) expect(s.version).toBe("1");
-    expect(RUBRIC_VERSION).toBe("2026-10-05.2");
+    expect(RUBRIC_VERSION).toBe("2026-10-05.3");
   });
 
   it("getScenario returns by id and throws on unknown ids", () => {
