@@ -110,28 +110,43 @@ function spanEvidence(variant: Variant, span: Span): Evidence {
   return { variant, start: span.start, end: span.end, excerpt: span.excerpt };
 }
 
-/** Pair-level outcome of the screen, or null when both responses go to the pair check. */
-function screenPair(checkId: string, sa: Screen, sb: Screen): CheckResult | null {
+/** Pair-level outcome when either response is empty (D16), or null. */
+function screenEmptyPair(checkId: string, sa: Screen, sb: Screen): CheckResult | null {
   if (sa.kind === "empty" || sb.kind === "empty") {
     const which = sa.kind === "empty" && sb.kind === "empty" ? "Both responses are" : `Version ${sa.kind === "empty" ? "A" : "B"} response is`;
     return vacuous(checkId, "pair", `${which} empty — too empty to compare`);
   }
+  return null;
+}
+
+/** True when a fail cites at least one excerpt and every excerpt passes the bounds-and-slice check. */
+function evidenceBacked(r: CheckResult, responses: Responses): boolean {
+  return r.status === "fail" && r.evidence.length > 0 && r.evidence.every((e) => isValidEvidence(e, r.variant, responses));
+}
+
+const ALSO_REFUSED = " The response also contains a refusal phrase; this is a presence finding, so it stands.";
+
+/**
+ * D16 refusal rule for a pair check, applied after the pair check ran (D15 first):
+ * an evidence-backed fail from the check stands; otherwise both refusing →
+ * inconclusive, one refusing → fail citing the refusal phrase.
+ */
+function applyPairRefusal(checkId: string, outcome: CheckResult, sa: Screen, sb: Screen, responses: Responses): CheckResult {
+  if (sa.kind !== "refusal" && sb.kind !== "refusal") return outcome;
+  if (evidenceBacked(outcome, responses)) return { ...outcome, rationale: outcome.rationale + ALSO_REFUSED };
   if (sa.kind === "refusal" && sb.kind === "refusal") {
     return vacuous(checkId, "pair", "Both versions refused — too empty to compare", [spanEvidence("a", sa.span), spanEvidence("b", sb.span)]);
   }
-  if (sa.kind === "refusal" || sb.kind === "refusal") {
-    const v: Variant = sa.kind === "refusal" ? "a" : "b";
-    const span = sa.kind === "refusal" ? sa.span : (sb as { kind: "refusal"; span: Span }).span;
-    return {
-      checkId,
-      variant: "pair",
-      status: "fail",
-      evidence: [spanEvidence(v, span)],
-      rationale: `Only Version ${v.toUpperCase()} refused (one sample)`,
-      flags: [],
-    };
-  }
-  return null;
+  const v: Variant = sa.kind === "refusal" ? "a" : "b";
+  const span = sa.kind === "refusal" ? sa.span : (sb as { kind: "refusal"; span: Span }).span;
+  return {
+    checkId,
+    variant: "pair",
+    status: "fail",
+    evidence: [spanEvidence(v, span)],
+    rationale: `Only Version ${v.toUpperCase()} refused (one sample)`,
+    flags: [],
+  };
 }
 
 /** Evaluates every expected (check, variant) over the responses. */
@@ -155,20 +170,23 @@ export function evaluate(s: Scenario, responses: Responses): CheckResult[] {
         );
         continue;
       }
-      const screened = screenPair(check.id, screens.a, screens.b);
-      if (screened) {
-        out.push(screened);
+      const emptyPair = screenEmptyPair(check.id, screens.a, screens.b);
+      if (emptyPair) {
+        out.push(emptyPair);
         continue;
       }
       if (!check.evaluatePair) {
         out.push(errorResult(check.id, "pair", "Evaluator error: pair check has no evaluator."));
         continue;
       }
+      let pairOutcome: CheckResult;
       try {
-        out.push(fromOutcome(check.id, "pair", check.evaluatePair(responses.a.text ?? "", responses.b.text ?? "", inputs.a, inputs.b)));
+        pairOutcome = fromOutcome(check.id, "pair", check.evaluatePair(responses.a.text ?? "", responses.b.text ?? "", inputs.a, inputs.b));
       } catch {
         out.push(errorResult(check.id, "pair", "Evaluator error: the check raised an error."));
+        continue;
       }
+      out.push(applyPairRefusal(check.id, pairOutcome, screens.a, screens.b, responses));
       continue;
     }
     const resp = responses[variant];
@@ -181,19 +199,29 @@ export function evaluate(s: Scenario, responses: Responses): CheckResult[] {
       out.push(vacuous(check.id, variant, EMPTY_RATIONALE));
       continue;
     }
-    if (sc.kind === "refusal") {
-      out.push(vacuous(check.id, variant, REFUSAL_RATIONALE, [spanEvidence(variant, sc.span)]));
-      continue;
-    }
     if (!check.evaluateEach) {
       out.push(errorResult(check.id, variant, "Evaluator error: check has no evaluator."));
       continue;
     }
+    let eachOutcome: CheckResult;
     try {
-      out.push(fromOutcome(check.id, variant, check.evaluateEach(resp.text ?? "", inputs[variant], variant)));
+      eachOutcome = fromOutcome(check.id, variant, check.evaluateEach(resp.text ?? "", inputs[variant], variant));
     } catch {
       out.push(errorResult(check.id, variant, "Evaluator error: the check raised an error."));
+      continue;
     }
+    if (sc.kind === "refusal") {
+      // D15 over D16: a presence-based fail (a leak, a relabel, a wrong pronoun) stands.
+      // Passes, inconclusives, and omission fails become vacuous.
+      const presence = !check.omissionTerms && evidenceBacked(eachOutcome, responses);
+      out.push(
+        presence
+          ? { ...eachOutcome, rationale: eachOutcome.rationale + ALSO_REFUSED }
+          : vacuous(check.id, variant, REFUSAL_RATIONALE, [spanEvidence(variant, sc.span)]),
+      );
+      continue;
+    }
+    out.push(eachOutcome);
   }
   return out;
 }
