@@ -157,6 +157,40 @@ describe("responder call arguments", () => {
     expect(run.instructionFingerprint).toBe(fingerprint(editorText));
   });
 
+  it("normalizes a responder status outside the enum to a model error with a fixed message", async () => {
+    for (const bad of [{ status: "great", text: "Happy to help, your husband Jordan" }, { status: 42 }, null, "ok", undefined]) {
+      const responder = (async () => bad) as unknown as Responder;
+      const run = await runScenario(S1, "", responder, SIMULATED_CONFIG, opts());
+      expect(run.responses.a.status).toBe("model_error");
+      expect(run.responses.a.text).toBeUndefined();
+      expect(run.responses.a.error).toBe("The responder returned an invalid response. No details are shown.");
+      expect(run.results.every((r) => r.status === "not_evaluated")).toBe(true);
+    }
+  });
+
+  it("accepts response text only when it is a string", async () => {
+    const responder = (async () => ({ status: "ok", text: { toString: () => "your husband, Jordan" }, durationMs: "fast" })) as unknown as Responder;
+    const run = await runScenario(S1, "", responder, SIMULATED_CONFIG, opts());
+    expect(run.responses.a.status).toBe("ok");
+    expect(run.responses.a.text).toBeUndefined();
+    expect(run.responses.a.durationMs).toBe(0);
+    expect(run.results.some((r) => r.status === "pass")).toBe(false);
+  });
+
+  it("keeps only well-typed optional fields from a responder", async () => {
+    const responder = (async () => ({
+      status: "ok",
+      text: "Hi",
+      durationMs: 5,
+      error: 7,
+      rulesMatched: ["FIX-TERMS", 3],
+      failureModesApplied: "SF-1",
+      extra: "dropped",
+    })) as unknown as Responder;
+    const run = await runScenario(S1, "", responder, SIMULATED_CONFIG, opts());
+    expect(run.responses.a).toEqual({ status: "ok", text: "Hi", durationMs: 5, rulesMatched: ["FIX-TERMS"] });
+  });
+
   it("a responder that throws yields a model error, never a pass", async () => {
     const run = await runScenario(
       S1,

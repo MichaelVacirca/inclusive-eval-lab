@@ -7,7 +7,7 @@ import { evaluate, validateResults } from "./evaluate";
 import { fingerprint } from "./fingerprint";
 import { renderInputs } from "./render";
 import { checksHash, RUBRIC_VERSION, type Scenario } from "./scenarios";
-import type { FaultKind, ResponseRecord, Run, RunConfig, RunMode } from "./types";
+import type { FaultKind, ResponseRecord, ResponseStatus, Run, RunConfig, RunMode } from "./types";
 
 export type Responder = (req: { instruction: string; input: string; config: RunConfig }) => Promise<ResponseRecord>;
 
@@ -29,14 +29,43 @@ export const LIVE_CONFIG: RunConfig = {
 export const LIVE_RESPONDER_VERSION = "live-stub-v1";
 
 const RESPONDER_FAILED = "The responder failed. No details are shown.";
+const RESPONDER_INVALID = "The responder returned an invalid response. No details are shown.";
 const LIVE_FAILED = "The live route returned an unexpected response. No details are shown.";
 
+const RESPONSE_STATUSES: readonly ResponseStatus[] = ["ok", "model_error", "timeout", "credentials_unavailable", "not_run"];
+
+function stringList(x: unknown): string[] | undefined {
+  return Array.isArray(x) ? x.filter((v): v is string => typeof v === "string") : undefined;
+}
+
+/** Rebuilds a ResponseRecord from whatever a responder returned, keeping only well-typed fields. */
+export function normalizeResponse(raw: unknown): ResponseRecord {
+  if (typeof raw !== "object" || raw === null) return { status: "model_error", error: RESPONDER_INVALID, durationMs: 0 };
+  const r = raw as Record<string, unknown>;
+  if (typeof r.status !== "string" || !(RESPONSE_STATUSES as readonly string[]).includes(r.status)) {
+    return { status: "model_error", error: RESPONDER_INVALID, durationMs: 0 };
+  }
+  const out: ResponseRecord = {
+    status: r.status as ResponseStatus,
+    durationMs: typeof r.durationMs === "number" && Number.isFinite(r.durationMs) && r.durationMs >= 0 ? r.durationMs : 0,
+  };
+  if (typeof r.text === "string") out.text = r.text;
+  if (typeof r.error === "string") out.error = r.error;
+  const rules = stringList(r.rulesMatched);
+  if (rules) out.rulesMatched = rules;
+  const modes = stringList(r.failureModesApplied);
+  if (modes) out.failureModesApplied = modes;
+  return out;
+}
+
 async function callSafely(responder: Responder, instruction: string, input: string, config: RunConfig): Promise<ResponseRecord> {
+  let raw: unknown;
   try {
-    return await responder({ instruction, input, config: { ...config } });
+    raw = await responder({ instruction, input, config: { ...config } });
   } catch {
     return { status: "model_error", error: RESPONDER_FAILED, durationMs: 0 };
   }
+  return normalizeResponse(raw);
 }
 
 function injected(status: ResponseRecord["status"], label: string): ResponseRecord {
