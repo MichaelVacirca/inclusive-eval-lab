@@ -16,7 +16,7 @@
 - Do not run `npm install` at the repo root. If the root `package-lock.json` changes, revert it with `git checkout package-lock.json`.
 - Add `vitest` to `site/package.json` devDependencies pinned to exactly `3.2.4`; add script `"test": "vitest run"`. Install with `cd site && npm install`.
 - Inside `site/lib/lab`, use relative imports (no `@/` alias) so Vitest needs no config.
-- In new content, use no vendor or AI-provider names, and no "Anthropic", "Claude", "OpenAI", "GPT", or "assignment". The live provider is called "live provider (not configured)".
+- In new content, use no AI-vendor, model-provider, or model names, and no references to how this work was commissioned. The live provider is called "live provider (not configured)".
 - All people and data are fictional and must use exactly the copy given below.
 - No `console.*` calls in `site/lib/lab/**` or `site/app/api/lab/**`. No `localStorage` or `sessionStorage`. No `dangerouslySetInnerHTML`. No `Date.now()`, `Math.random()`, or `new Date()` during server render.
 - Never call simulated output "model output"; use "simulated response".

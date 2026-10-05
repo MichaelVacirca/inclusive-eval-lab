@@ -5,13 +5,13 @@ Status: **Approved by product owner (v0.2, 2026-10-05).**
 ## 1. Context and baseline
 
 - Baseline commit: `1033bbc` (`main`).
-- Existing features: Next.js 16 site (`site/`: patterns, checklist, registry, research, tools), eval engine (`core/eval-engine`), five domain scenario packages, adversarial package, CLI (`packages/eval`), Claude Code plugin, GitHub Action, pre-commit hook.
+- Existing features: Next.js 16 site (`site/`: patterns, checklist, registry, research, tools), eval engine (`core/eval-engine`), five domain scenario packages, adversarial package, CLI (`packages/eval`), coding-assistant plugin (`plugin/`), GitHub Action, pre-commit hook.
 - Baseline checks (all run on 2026-10-05): root `npm run build` ✅, `npm run test` ✅ (152 tests, 8 workspace packages), `npm run typecheck` ✅, `site` `npm run build` ✅ (workspace-root warning). The site has no lint or test script.
 - Pre-existing issues (out of scope unless noted):
-  1. `core/eval-engine/src/runner.ts` puts the system prompt inside the user message; the CLI's OpenAI path also sends it as a system message (double inclusion); the Anthropic path never uses `system`.
+  1. `core/eval-engine/src/runner.ts` puts the system prompt inside the user message; one CLI provider path also sends it as a system message (double inclusion); the other provider path never uses the system parameter.
   2. Results are binary; a model error aborts the run; no error/inconclusive state.
   3. `.github/workflows/publish-eval.yml` uses `working-directory: eval`, which does not exist.
-  4. `.claude/launch.json` contains a developer-specific absolute path.
+  4. A local editor launch configuration contains a developer-specific absolute path.
   5. `npm install` rewrites the root `package-lock.json`.
   6. Some regex checks are coarse (e.g. `identity-002` fails on any "her").
 
@@ -145,7 +145,7 @@ Recorded-run import/export; live provider integration (stub only); `localStorage
 | D2 | Deterministic rubric checks, no LLM judge | Reproducible, testable without a key, no injection surface | **Approved by PO** |
 | D3 | Simulated responder for demo reruns, fully disclosed rules | Zero-setup interactive demo; honest labeling | **Approved by PO** |
 | D4 | Target about 3.5 h total effort; hard stop at 8 h | Full lifecycle with gates | **Approved by PO** |
-| D5 | Private submission repo `MichaelVacirca/inclusive-eval-lab`; never push lab work to the public repo | Assignment constraint | **Approved by PO** |
+| D5 | Submission repo `MichaelVacirca/inclusive-eval-lab`; never push lab work to the original project repo | Keeps the original project unchanged | **Approved by PO** (visibility: see D14) |
 | D6 | Live route ships as a stub returning `credentials_unavailable` | No key to verify; both reviewers recommended it; removes cost and secret risk | **Approved by PO** (spec v0.2) |
 | D7 | Overrides in memory plus JSON download; no `localStorage` | Avoids orphaned overrides and hydration issues | **Approved by PO** (spec v0.2) |
 | D8 | Lab is separate from the CLI eval; results may differ | Avoids the runner's system-prompt issues | **Approved by PO** (spec v0.2) |
@@ -154,6 +154,8 @@ Recorded-run import/export; live provider integration (stub only); `localStorage
 | D11 | Commits carry `Assisted-by: AI coding agent`; PR bodies disclose AI assistance without vendor names | No-branding constraint with transparent disclosure | **Approved by PO** |
 | D12 | Existing provider identifiers in 67 files are left unchanged | Changing them would break existing integrations; flagged as ambiguity | Flagged to PO |
 | D13 | Permission to extend an existing project | Proceeding on an assumption; no reply received | **Unresolved — not approved** |
+| D14 | Submission repo is **public** | PO decision, explicitly confirmed, overriding the earlier private-repo requirement | **Approved by PO** |
+| D15 | `s3-boundary-respected` fails on a restricted term before applying the non-vacuity anchor | A leak is a presence-based finding; non-vacuity only guards absence-based passes (plan defect found by the implementer) | Lead decision |
 
 ## 15. Design-review record
 
