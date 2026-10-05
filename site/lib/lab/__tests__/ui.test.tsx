@@ -2,11 +2,13 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { findingKey } from "../../../app/lab/components/findings";
+import { RunDetails } from "../../../app/lab/components/run-details";
 import { StatusBadge, statusLabel } from "../../../app/lab/components/status";
 import { HighlightedText } from "../../../app/lab/highlight";
 import { LabClient } from "../../../app/lab/lab-client";
 import { runScenario, type Responder } from "../run";
-import { scenarios } from "../scenarios";
+import { getScenario, scenarios, type Scenario } from "../scenarios";
 import { SIMULATED_CONFIG, SIMULATOR_VERSION, simulatedResponder } from "../simulator";
 import type { CheckStatus, Run } from "../types";
 
@@ -96,6 +98,29 @@ describe("StatusBadge", () => {
     expect(statusLabel("error", ["malformed"])).toBe("Evaluator error (malformed) — not evaluated");
     expect(statusLabel("inconclusive", ["unsupported_claim"])).toBe("Inconclusive — unsupported claim");
     expect(statusLabel("inconclusive", ["vacuous"])).toBe("Inconclusive — response too empty to judge");
+  });
+});
+
+describe("findingKey", () => {
+  it("includes the run id so an open override draft resets when the displayed run changes", () => {
+    const result = { checkId: "s1-doc-parity", variant: "pair" as const };
+    expect(findingKey("spouse-parity-baseline", result)).not.toBe(findingKey("spouse-parity-run-1", result));
+    expect(findingKey("spouse-parity-run-1", result)).toBe("spouse-parity-run-1/s1-doc-parity/pair");
+  });
+});
+
+describe("RunDetails", () => {
+  it("highlights the variable at the template offset, not the first occurrence of its value", async () => {
+    const base = getScenario("spouse-parity");
+    const s: Scenario = { ...base, template: "My wife asked: may I add my {{variable}}, Jordan Lee?" };
+    const run = await runScenario(s, "", simulatedResponder, SIMULATED_CONFIG, {
+      id: "offset-run",
+      createdAt: "2026-10-05T00:00:00.000Z",
+      mode: "simulated",
+      responderVersion: SIMULATOR_VERSION,
+    });
+    const html = renderToStaticMarkup(<RunDetails scenario={s} run={run} />);
+    expect(html).toMatch(/My wife asked: may I add my <mark[^>]*>wife<\/mark>, Jordan Lee\?/);
   });
 });
 

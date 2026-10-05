@@ -5,6 +5,11 @@ import type { CheckDef, Scenario } from "../../../lib/lab/scenarios";
 import type { CheckResult, CheckStatus, Override, Run } from "../../../lib/lab/types";
 import { BUTTON, FLAG_LABEL, FOCUS, PROVENANCE_LABEL, StatusBadge, statusLabel, variantLabel } from "./status";
 
+/** Row key: includes the run id so an open override draft resets when the displayed run changes. */
+export function findingKey(runId: string, r: { checkId: string; variant: string }): string {
+  return `${runId}/${r.checkId}/${r.variant}`;
+}
+
 export type SaveOverride = (run: Run, result: CheckResult, humanStatus: string, reason: string) => string | null;
 
 const COUNT_ORDER: Array<[CheckStatus, string]> = [
@@ -303,7 +308,7 @@ export function Findings({
       <ol className="space-y-3">
         {run.results.map((r) => (
           <FindingRow
-            key={`${r.checkId}/${r.variant}`}
+            key={findingKey(run.id, r)}
             scenario={scenario}
             run={run}
             result={r}

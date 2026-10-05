@@ -1,3 +1,4 @@
+import { renderInputs } from "../../../lib/lab/render";
 import type { Scenario } from "../../../lib/lab/scenarios";
 import type { Run, Variant } from "../../../lib/lab/types";
 import { HighlightedText } from "../highlight";
@@ -56,7 +57,7 @@ export function RunMeta({ run, title }: { run: Run; title?: string }) {
 function VariantCard({ scenario, run, v }: { scenario: Scenario; run: Run; v: Variant }) {
   const input = run.inputsSent[v];
   const value = scenario.variable[v].value;
-  const prefixLen = input.indexOf(value);
+  const prefixLen = renderInputs(scenario).prefix.length;
   const response = run.responses[v];
   const spans = run.results.flatMap((r) => r.evidence.filter((e) => e.variant === v));
   const okText = run.mode === "simulated" ? "Simulated response" : "Response";
@@ -67,7 +68,7 @@ function VariantCard({ scenario, run, v }: { scenario: Scenario; run: Run; v: Va
       <p className="mt-1 whitespace-pre-wrap rounded-md bg-zinc-900 p-3 text-sm text-zinc-300">
         <HighlightedText
           text={input}
-          spans={prefixLen >= 0 ? [{ start: prefixLen, end: prefixLen + value.length }] : []}
+          spans={[{ start: prefixLen, end: prefixLen + value.length }]}
           markClassName="rounded-sm bg-sky-400/20 px-0.5 text-sky-200 underline decoration-sky-300 decoration-2 underline-offset-2"
         />
       </p>
