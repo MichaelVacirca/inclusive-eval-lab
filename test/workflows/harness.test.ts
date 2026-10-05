@@ -2,7 +2,7 @@
 // workflow tests pass vacuously.
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { type Sandbox, makeSandbox, resolveEnv, runStep, shellArgs, withDefaults } from "./harness";
+import { type Sandbox, evaluateIf, makeSandbox, resolveEnv, runStep, shellArgs, withDefaults } from "./harness";
 
 let sb: Sandbox;
 beforeEach(() => {
@@ -45,6 +45,22 @@ describe("resolveEnv", () => {
   });
 });
 
+describe("evaluateIf", () => {
+  it("compares an input with a literal, ignoring case as GitHub does", () => {
+    expect(evaluateIf("inputs.v == 'source'", { v: "source" })).toBe(true);
+    expect(evaluateIf("inputs.v == 'source'", { v: "SOURCE" })).toBe(true);
+    expect(evaluateIf("inputs.v == 'source'", { v: "3" })).toBe(false);
+    expect(evaluateIf("inputs.v == 'source'", {})).toBe(false);
+  });
+
+  it.each(["inputs.v != 'x'", "github.ref == 'main'", "inputs.v == 'a' && inputs.w == 'b'", "success()"])(
+    "refuses expressions it doesn't model: %s",
+    (expr) => {
+      expect(() => evaluateIf(expr, {})).toThrow(/unsupported if expression/);
+    },
+  );
+});
+
 describe("shellArgs", () => {
   it("matches the runner's bash invocations", () => {
     expect(shellArgs({})).toEqual(["-e"]);
@@ -79,6 +95,12 @@ describe("runStep and the stubs", () => {
     const r = runStep(sb, { run: "npm\nnode" }, {}, { STUB_EXIT_NPM: "3" });
     expect(r.status).toBe(3);
     expect(r.calls.map((c) => c.prog)).toEqual(["npm"]);
+  });
+
+  it("returns only the calls made by that run", () => {
+    runStep(sb, { run: "npm first" }, {});
+    const second = runStep(sb, { run: "node second" }, {});
+    expect(second.calls.map((c) => [c.prog, ...c.argv])).toEqual([["node", "second"]]);
   });
 
   it("reports files the script creates in the working directory", () => {

@@ -99,13 +99,16 @@ name: LGBTQIA+ Safety
 on: [push, pull_request]
 jobs:
   eval:
-    uses: InclusiveCode/inclusive-ai/.github/workflows/lgbt-safety-eval.yml@main
+    # Pinning a commit SHA instead of @main is the safest option.
+    uses: MichaelVacirca/inclusive-eval-lab/.github/workflows/lgbt-safety-eval.yml@main
     with:
       system-prompt: "Your system prompt here"
       eval-version: "3" # optional: a published version, range or tag
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
+
+The workflow's job asks for `contents: read`, so if your workflow sets `permissions`, include it. Pull requests from forks don't receive secrets, so those runs stop with a missing-API-key error.
 
 ### 4. Add the pre-commit hook
 

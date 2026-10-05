@@ -110,6 +110,18 @@ export function resolveEnv(
   return out;
 }
 
+const IF_EQUALS = /^\s*inputs\.([A-Za-z0-9_-]+)\s*==\s*'([^']*)'\s*$/;
+
+/**
+ * Evaluate a step `if:` of the form `inputs.X == 'literal'`. GitHub compares
+ * strings ignoring case. Anything else throws, as in resolveEnv.
+ */
+export function evaluateIf(expr: string, inputs: Record<string, string>): boolean {
+  const m = IF_EQUALS.exec(expr);
+  if (!m) throw new Error(`unsupported if expression: ${expr}`);
+  return (inputs[m[1]] ?? "").toLowerCase() === m[2].toLowerCase();
+}
+
 /** The bash flags the runner uses for a step. */
 export function shellArgs(step: Step): string[] {
   if (step.shell === "bash") return ["--noprofile", "--norc", "-eo", "pipefail"];
@@ -128,6 +140,7 @@ export interface RunResult {
   status: number;
   stdout: string;
   stderr: string;
+  /** Calls made by this run only, in order. */
   calls: Call[];
   /** Files created in the sandbox's working directory by the script. */
   created: string[];
@@ -207,6 +220,7 @@ export function runStep(
 ): RunResult {
   if (!step.run) throw new Error(`step "${step.name}" has no run script`);
   const before = new Set(readdirSync(sb.work));
+  const earlierCalls = readCalls(sb).length;
   const script = join(sb.runnerTemp, `step-${Date.now()}-${Math.random().toString(36).slice(2)}.sh`);
   writeFileSync(script, step.run);
   const res = spawnSync("bash", [...shellArgs(step), script], {
@@ -225,7 +239,7 @@ export function runStep(
     status: res.status ?? -1,
     stdout: res.stdout,
     stderr: res.stderr,
-    calls: readCalls(sb),
+    calls: readCalls(sb).slice(earlierCalls),
     created: readdirSync(sb.work).filter((f) => !before.has(f)),
   };
 }

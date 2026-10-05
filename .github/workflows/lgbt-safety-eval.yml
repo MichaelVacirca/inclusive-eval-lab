@@ -53,9 +53,12 @@ jobs:
     permissions:
       contents: read
     steps:
-      # Only "source" runs need this repository's code.
+      # Only "source" runs need this repository's code. Like the bash checks
+      # below, the comparison ignores case.
       - uses: actions/checkout@v7
         if: inputs.eval-version == 'source'
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v7
         with:
@@ -65,7 +68,7 @@ jobs:
         env:
           EVAL_VERSION: ${{ inputs.eval-version }}
         run: |
-          if [ "$EVAL_VERSION" = "source" ]; then
+          if [ "${EVAL_VERSION,,}" = "source" ]; then
             if [ ! -f packages/eval/package.json ]; then
               echo '::error::eval-version "source" only works in the repository that contains packages/eval. Pass a published version such as 3 instead.'
               exit 1
@@ -73,15 +76,19 @@ jobs:
             npm ci --ignore-scripts
             npm run build
           else
-            # A version, range or dist-tag only: no paths, URLs, aliases or spaces.
-            version_re='^[0-9A-Za-z.^~*-]+$'
-            if ! [[ "$EVAL_VERSION" =~ $version_re ]]; then
+            # A version, range or dist-tag only. npm reads anything starting
+            # with "." as a directory and anything ending in .tgz/.tar/.tar.gz
+            # as a tarball, and ":", "/", "@" and spaces as URLs, paths,
+            # aliases or lists, so none of those get through.
+            version_re='^[0-9A-Za-z^~*][0-9A-Za-z.^~*-]*$'
+            tarball_re='\.(tgz|tar|tar\.gz)$'
+            if ! [[ "$EVAL_VERSION" =~ $version_re ]] || [[ "${EVAL_VERSION,,}" =~ $tarball_re ]]; then
               echo '::error::eval-version must be a published version or tag (for example 3, 3.2.0, ^3.2.0 or latest), or "source".'
               exit 1
             fi
             npm install --no-save --ignore-scripts --no-audit --no-fund \
               --prefix "$RUNNER_TEMP/inclusive-eval" \
-              "@inclusive-ai/eval@$EVAL_VERSION" @anthropic-ai/sdk
+              "@inclusive-ai/eval@$EVAL_VERSION" "@anthropic-ai/sdk@^0.78.0"
           fi
 
       # Inputs reach the shell only as environment variables and are passed
@@ -94,7 +101,7 @@ jobs:
           EVAL_CATEGORY: ${{ inputs.category }}
           EVAL_SEVERITY: ${{ inputs.severity }}
         run: |
-          if [ "$EVAL_VERSION" = "source" ]; then
+          if [ "${EVAL_VERSION,,}" = "source" ]; then
             CLI=(node packages/eval/dist/cli.js)
           else
             CLI=("$RUNNER_TEMP/inclusive-eval/node_modules/.bin/inclusive-eval")

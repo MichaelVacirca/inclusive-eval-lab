@@ -1,10 +1,13 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
 import {
   INJECTION_PAYLOADS,
+  REPO_ROOT,
   type Sandbox,
   allSteps,
+  evaluateIf,
   loadYaml,
   makeSandbox,
   resolveEnv,
@@ -24,6 +27,9 @@ const dispatch = doc.on.workflow_dispatch.inputs;
 const call = doc.on.workflow_call.inputs;
 
 const REGISTRY_CLI = "inclusive-eval/node_modules/.bin/inclusive-eval";
+const ROOT_PKG = JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8"));
+const SDK = `@anthropic-ai/sdk@${ROOT_PKG.devDependencies["@anthropic-ai/sdk"]}`;
+const checkout = steps.find((s) => s.uses?.startsWith("actions/checkout@"));
 const SECRETS = { ANTHROPIC_API_KEY: "sk-test" };
 
 let sb: Sandbox;
@@ -86,10 +92,10 @@ describe("job setup", () => {
     expect(job.permissions).toEqual({ contents: "read" });
   });
 
-  it("checks out code only for source runs", () => {
-    const checkout = steps.find((s) => s.uses?.startsWith("actions/checkout@"));
+  it("checks out code only for source runs, without keeping git credentials", () => {
     expect(checkout?.uses).toBe("actions/checkout@v7");
     expect(checkout?.if).toBe("inputs.eval-version == 'source'");
+    expect(checkout?.with).toEqual({ "persist-credentials": false });
   });
 
   it("sets up Node 26 without a dependency cache, since registry runs have no lockfile", () => {
@@ -128,7 +134,7 @@ describe("install step: published versions", () => {
             "--prefix",
             join(sb.runnerTemp, "inclusive-eval"),
             `@inclusive-ai/eval@${version}`,
-            "@anthropic-ai/sdk",
+            SDK,
           ],
           cwd: sb.work,
           apiKeySet: false,
@@ -136,6 +142,11 @@ describe("install step: published versions", () => {
       ]);
     },
   );
+
+  it("pins the SDK to the same range as the repo root", () => {
+    expect(SDK).toMatch(/^@anthropic-ai\/sdk@\^?\d/);
+    expect(runInstall({ "eval-version": "3" }).calls[0].argv.at(-1)).toBe(SDK);
+  });
 
   it("uses the caller default (3) when no version is passed", () => {
     const r = runInstall({});
@@ -192,6 +203,14 @@ describe("install step: malformed versions", () => {
     ["two versions", "3 4"],
     ["shell metacharacters", "3; touch PWNED"],
     ["command substitution", "$(touch PWNED)"],
+    ["the current directory", "."],
+    ["the parent directory", ".."],
+    ["a dot-prefixed name", ".x"],
+    ["a leading dash", "-1"],
+    ["a .tgz tarball", "evil.tgz"],
+    ["an upper-case .TGZ tarball", "EVIL.TGZ"],
+    ["a .tar tarball", "3.2.0-x.tar"],
+    ["a .tar.gz tarball", "pkg.tar.gz"],
   ])("rejects %s without calling npm", (_label, version) => {
     const r = runInstall({ "eval-version": version });
     expect(r.status).toBe(1);
@@ -294,5 +313,123 @@ describe("run step: injection", () => {
   it("does not let a payload in eval-version run commands", () => {
     const r = runCli({ "eval-version": "$(touch PWNED)" });
     expect(r.created).toEqual([]);
+  });
+});
+
+describe("source runs ignore case, like the checkout step's if:", () => {
+  it.each(["Source", "SOURCE"])("treats %s as a source run in both steps", (value) => {
+    withSourceTree();
+    const install = runInstall({ "eval-version": value });
+    expect(install.status).toBe(0);
+    expect(install.calls.map((c) => c.argv[0])).toEqual(["ci", "run"]);
+    const run = runCli({ "eval-version": value });
+    expect(run.calls.map((c) => [c.prog, c.argv[0]])).toEqual([["node", "packages/eval/dist/cli.js"]]);
+  });
+
+  it.each(["source", "Source", "SOURCE", "3", "latest", "sources", "", " source"])(
+    "checks out exactly when the install step builds from source (%j)",
+    (value) => {
+      withSourceTree();
+      const inputs = withDefaults(call, { "eval-version": value });
+      const checksOut = evaluateIf(String(checkout?.if), inputs);
+      const builds = runInstall({ "eval-version": value }).calls.some((c) => c.argv[0] === "ci");
+      expect(builds).toBe(checksOut);
+    },
+  );
+});
+
+describe("install and run together", () => {
+  /** An npm stub that, like npm, puts the CLI under the --prefix it's given. */
+  function withInstallingNpm() {
+    const root = join(sb.work, "..");
+    const template = join(root, "cli-template", "inclusive-eval");
+    const recorder = join(root, "recorder", "npm");
+    writeStub(sb, template, "inclusive-eval");
+    writeStub(sb, recorder, "npm");
+    const npm = [
+      "#!/bin/bash",
+      'prev=""',
+      'for a in "$@"; do',
+      '  if [ "$prev" = "--prefix" ]; then',
+      '    mkdir -p "$a/node_modules/.bin"',
+      `    cp '${template}' "$a/node_modules/.bin/inclusive-eval"`,
+      "  fi",
+      '  prev="$a"',
+      "done",
+      `exec '${recorder}' "$@"`,
+      "",
+    ].join("\n");
+    writeFileSync(join(sb.bin, "npm"), npm, { mode: 0o755 });
+  }
+
+  it("runs the CLI the install step put in place, for a published version", () => {
+    withInstallingNpm();
+    const installed = runInstall({ "eval-version": "3.2.0" });
+    expect(installed.status).toBe(0);
+    expect(installed.calls.map((c) => [c.prog, ...c.argv])).toEqual([
+      expect.arrayContaining(["npm", "install", "@inclusive-ai/eval@3.2.0"]),
+    ]);
+    const r = runCli({ "eval-version": "3.2.0", category: "identity" });
+    expect(r.status).toBe(0);
+    expect(r.calls.map((c) => [c.prog, ...c.argv])).toEqual([["inclusive-eval", "--category", "identity"]]);
+  });
+
+  it("builds and runs from source with the manual-run defaults", () => {
+    withSourceTree();
+    const inputs = withDefaults(dispatch, { category: "identity" });
+    expect(inputs["eval-version"]).toBe("source");
+    expect(evaluateIf(String(checkout?.if), inputs)).toBe(true);
+    const env = (step: typeof install) => resolveEnv(step.env, { inputs, secrets: SECRETS });
+    const installed = runStep(sb, install, env(install));
+    expect(installed.status).toBe(0);
+    expect(installed.calls.map((c) => [c.prog, ...c.argv])).toEqual([
+      ["npm", "ci", "--ignore-scripts"],
+      ["npm", "run", "build"],
+    ]);
+    const r = runStep(sb, runEval, env(runEval));
+    expect(r.status).toBe(0);
+    expect(r.calls.map((c) => [c.prog, ...c.argv])).toEqual([
+      ["node", "packages/eval/dist/cli.js", "--category", "identity"],
+    ]);
+  });
+});
+
+describe("README example", () => {
+  const readme = readFileSync(join(REPO_ROOT, "README.md"), "utf8");
+  const block = [...readme.matchAll(/```yaml\n([\s\S]*?)```/g)]
+    .map((m) => m[1])
+    .find((b) => b.includes("lgbt-safety-eval.yml@"));
+  const example = parseYaml(block ?? "");
+  const usage = Object.values(example?.jobs ?? {})[0] as {
+    uses: string;
+    with?: Record<string, unknown>;
+    secrets?: Record<string, unknown>;
+  };
+
+  it("exists", () => {
+    expect(block).toBeDefined();
+  });
+
+  it("points at this repository's workflow file", () => {
+    const m = /^([^/]+\/[^/]+)\/(.+)@(.+)$/.exec(usage.uses);
+    expect(m?.[1]).toBe("MichaelVacirca/inclusive-eval-lab");
+    expect(m?.[2]).toBe(FILE);
+  });
+
+  it("only passes inputs the workflow declares", () => {
+    for (const key of Object.keys(usage.with ?? {})) expect(Object.keys(call)).toContain(key);
+  });
+
+  it("passes every required secret", () => {
+    const required = Object.entries(doc.on.workflow_call.secrets as Record<string, { required?: boolean }>)
+      .filter(([, d]) => d.required)
+      .map(([n]) => n);
+    for (const name of required) expect(Object.keys(usage.secrets ?? {})).toContain(name);
+  });
+
+  it("uses a version the install step accepts", () => {
+    withRegistryCli();
+    const version = String(usage.with?.["eval-version"] ?? call["eval-version"].default);
+    expect(runInstall({ "eval-version": version }).status).toBe(0);
   });
 });
