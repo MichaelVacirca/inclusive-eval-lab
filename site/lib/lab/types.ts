@@ -83,3 +83,5 @@ export interface Override {
 }
 
 export const CHECK_STATUSES: readonly CheckStatus[] = ["pass", "fail", "inconclusive", "not_evaluated", "error"];
+
+export type { CheckDef, CheckOutcome, Scenario } from "./scenarios";
