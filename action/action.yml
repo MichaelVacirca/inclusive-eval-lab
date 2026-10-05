@@ -27,7 +27,7 @@ inputs:
     required: false
     default: ""
   fail-on:
-    description: "Exit code 1 when verdict is FAIL (default) or NEEDS_WORK"
+    description: "Lowest verdict that fails the step: FAIL (default) fails on FAIL, or VULNERABLE in red-team mode; NEEDS_WORK also fails on NEEDS_WORK, or PARTIAL in red-team mode"
     required: false
     default: "FAIL"
   adversarial:
@@ -42,6 +42,10 @@ inputs:
     description: "Number of parallel LLM calls for red-team mode (default: 5)"
     required: false
     default: "5"
+  eval-version:
+    description: "@inclusive-ai/eval version, range or dist-tag to install from npm (for example 3, 3.2.0 or ^3.2.0)"
+    required: false
+    default: "3"
 
 runs:
   using: "composite"
@@ -52,9 +56,28 @@ runs:
         node-version: 26
         package-manager-cache: false
 
+    # The CLI goes into RUNNER_TEMP, not the caller's workspace, so the
+    # caller's package.json, lockfile and node_modules are left alone, and no
+    # dependency install scripts run.
     - name: Install @inclusive-ai/eval
       shell: bash
-      run: npm install --no-save @inclusive-ai/eval @anthropic-ai/sdk
+      env:
+        EVAL_VERSION: ${{ inputs.eval-version }}
+      run: |
+        # A version, range or dist-tag only, as in the reusable workflow. npm
+        # reads anything starting with "." as a directory and anything ending
+        # in .tgz/.tar/.tar.gz as a tarball, and ":", "/", "@" and spaces as
+        # URLs, paths, aliases or lists, so none of those get through.
+        version_re='^[0-9A-Za-z^~*][0-9A-Za-z.^~*-]*$'
+        tarball_re='\.(tgz|tar|tar\.gz)$'
+        lower=$(printf '%s' "$EVAL_VERSION" | tr '[:upper:]' '[:lower:]')
+        if ! [[ "$EVAL_VERSION" =~ $version_re ]] || [[ "$lower" =~ $tarball_re ]]; then
+          echo '::error::eval-version must be a published version or tag (for example 3, 3.2.0, ^3.2.0 or latest).'
+          exit 1
+        fi
+        npm install --no-save --ignore-scripts --no-audit --no-fund \
+          --prefix "$RUNNER_TEMP/inclusive-eval" \
+          "@inclusive-ai/eval@$EVAL_VERSION" "@anthropic-ai/sdk@^0.78.0"
 
     # Inputs reach the shell only as environment variables and are passed to
     # the CLI as separate arguments, never re-parsed by the shell.
@@ -71,6 +94,20 @@ runs:
         EVAL_CONCURRENCY: ${{ inputs.concurrency }}
         EVAL_FAIL_ON: ${{ inputs.fail-on }}
       run: |
+        FAIL_ON=$(printf '%s' "$EVAL_FAIL_ON" | tr '[:lower:]' '[:upper:]')
+        case "$FAIL_ON" in
+          "" | FAIL) FAIL_ON=FAIL ;;
+          NEEDS_WORK) ;;
+          *)
+            echo '::error::fail-on must be FAIL or NEEDS_WORK.'
+            exit 1
+            ;;
+        esac
+        CLI="$RUNNER_TEMP/inclusive-eval/node_modules/.bin/inclusive-eval"
+        if [ ! -x "$CLI" ]; then
+          echo "::error::inclusive-eval CLI not found in RUNNER_TEMP. The install step should have put it there."
+          exit 1
+        fi
         ARGS=()
         if [ -n "$EVAL_SYSTEM_PROMPT" ]; then
           ARGS+=(--system "$EVAL_SYSTEM_PROMPT")
@@ -93,10 +130,24 @@ runs:
         if [ -n "$EVAL_CONCURRENCY" ] && [ "$EVAL_CONCURRENCY" != "5" ]; then
           ARGS+=(--concurrency "$EVAL_CONCURRENCY")
         fi
-        npx --no-install inclusive-eval "${ARGS[@]}"
-        EXIT_CODE=$?
-        if [ "$EVAL_FAIL_ON" = "NEEDS_WORK" ] && [ $EXIT_CODE -eq 0 ]; then
-          # Re-run with stricter check — parse output for NEEDS_WORK
-          echo "Checking for NEEDS_WORK verdict..."
+        OUTPUT=$(mktemp "$RUNNER_TEMP/inclusive-eval-output.XXXXXX")
+        EXIT_CODE=0
+        "$CLI" "${ARGS[@]}" | tee "$OUTPUT" || EXIT_CODE=${PIPESTATUS[0]}
+        # The CLI itself exits non-zero on FAIL (VULNERABLE in red-team mode).
+        if [ "$EXIT_CODE" -ne 0 ] || [ "$FAIL_ON" = FAIL ]; then
+          exit "$EXIT_CODE"
         fi
-        exit $EXIT_CODE
+        # It exits 0 on NEEDS_WORK (PARTIAL in red-team mode), so read the
+        # verdict it printed. The first "Verdict: " line is the summary's.
+        VERDICT=$(awk '/^Verdict: /{v=$NF; sub(/\r$/, "", v); print v; exit}' "$OUTPUT")
+        case "$VERDICT" in
+          PASS | RESILIENT) ;;
+          NEEDS_WORK | PARTIAL | FAIL | VULNERABLE)
+            echo "::error::Verdict is $VERDICT and fail-on is NEEDS_WORK."
+            exit 1
+            ;;
+          *)
+            echo "::error::fail-on is NEEDS_WORK, but no verdict was found in the CLI output."
+            exit 1
+            ;;
+        esac

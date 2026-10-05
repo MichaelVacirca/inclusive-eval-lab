@@ -13,6 +13,7 @@ import {
   resolveEnv,
   runStep,
   shellArgs,
+  stubVars,
   withDefaults,
   writeSpy,
   writeStub,
@@ -103,6 +104,33 @@ describe("runStep and the stubs", () => {
 
   it("uses STUB_EXIT_<PROG> as the stub's exit code", () => {
     expect(runStep(sb, { run: "npm" }, {}, { STUB_EXIT_NPM: "7" }).status).toBe(7);
+  });
+
+  it("names a stub's control variables after the program", () => {
+    expect(stubVars("npm")).toEqual({ exit: "STUB_EXIT_NPM", stdout: "STUB_STDOUT_NPM" });
+    expect(stubVars("inclusive-eval")).toEqual({ exit: "STUB_EXIT_INCLUSIVE_EVAL", stdout: "STUB_STDOUT_INCLUSIVE_EVAL" });
+  });
+
+  it("prints STUB_STDOUT_<PROG> verbatim after its own line", () => {
+    const out = "Verdict: ⚠️ NEEDS_WORK\r\n$(not run) `nor this` %s %%\nno final newline";
+    const r = runStep(sb, { run: "node" }, {}, { STUB_STDOUT_NODE: out });
+    expect(r.stdout).toBe(`stub node called\n${out}`);
+    expect(r.created).toEqual([]);
+  });
+
+  it("prints only its own line when STUB_STDOUT_<PROG> is unset or empty", () => {
+    expect(runStep(sb, { run: "node" }, {}).stdout).toBe("stub node called\n");
+    expect(runStep(sb, { run: "node" }, {}, { STUB_STDOUT_NODE: "" }).stdout).toBe("stub node called\n");
+  });
+
+  it("controls each stub separately, including stubs with dashes in their names", () => {
+    writeStub(sb, join(sb.bin, "inclusive-eval"), "inclusive-eval");
+    const r = runStep(sb, { run: "npm; inclusive-eval" }, {}, {
+      STUB_STDOUT_INCLUSIVE_EVAL: "cli out\n",
+      STUB_EXIT_INCLUSIVE_EVAL: "5",
+    });
+    expect(r.stdout).toBe("stub npm called\nstub inclusive-eval called\ncli out\n");
+    expect(r.status).toBe(5);
   });
 
   it("stops at the first failing command under -e", () => {

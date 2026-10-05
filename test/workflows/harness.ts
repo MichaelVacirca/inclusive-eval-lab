@@ -178,14 +178,21 @@ export function makeSandbox(): Sandbox {
   return sb;
 }
 
+/** Environment variable names that control a stub: its exit code and extra stdout. */
+export function stubVars(prog: string): { exit: string; stdout: string } {
+  const suffix = prog.toUpperCase().replace(/[^A-Z0-9]/g, "_");
+  return { exit: `STUB_EXIT_${suffix}`, stdout: `STUB_STDOUT_${suffix}` };
+}
+
 /**
  * Write an executable stub that records its argv (NUL-separated, so values
  * with newlines survive), its cwd and whether the API key is in its
- * environment, then exits with $STUB_EXIT_<PROG> (default 0).
+ * environment, prints $STUB_STDOUT_<PROG> verbatim if set, then exits with
+ * $STUB_EXIT_<PROG> (default 0).
  */
 export function writeStub(sb: Sandbox, path: string, prog: string): void {
   mkdirSync(dirname(path), { recursive: true });
-  const exitVar = `STUB_EXIT_${prog.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`;
+  const { exit: exitVar, stdout: stdoutVar } = stubVars(prog);
   const script = [
     "#!/bin/bash",
     `log=${shQuote(sb.log)}`,
@@ -196,6 +203,7 @@ export function writeStub(sb: Sandbox, path: string, prog: string): void {
     `if [ $# -gt 0 ]; then printf '%s\\0' "$@"; fi > "$log/$n.argv"`,
     `printf '%s\\n%s\\n%s\\n' ${shQuote(prog)} "$PWD" "\${ANTHROPIC_API_KEY:+set}" > "$log/$n.meta"`,
     `echo "stub ${prog} called"`,
+    `if [ -n "\${${stdoutVar}+set}" ]; then printf '%s' "\$${stdoutVar}"; fi`,
     `exit "\${${exitVar}:-0}"`,
     "",
   ].join("\n");
