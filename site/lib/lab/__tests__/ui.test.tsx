@@ -4,13 +4,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { findingKey } from "../../../app/lab/components/findings";
 import { RunDetails } from "../../../app/lab/components/run-details";
-import { StatusBadge, statusLabel } from "../../../app/lab/components/status";
+import { liveAlertText, StatusBadge, statusLabel } from "../../../app/lab/components/status";
 import { HighlightedText } from "../../../app/lab/highlight";
 import { LabClient } from "../../../app/lab/lab-client";
 import { runScenario, type Responder } from "../run";
 import { getScenario, scenarios, type Scenario } from "../scenarios";
 import { SIMULATED_CONFIG, SIMULATOR_VERSION, simulatedResponder } from "../simulator";
-import type { CheckStatus, Run } from "../types";
+import type { CheckStatus, ResponseRecord, Run } from "../types";
 
 const SITE = resolve(__dirname, "../../..");
 
@@ -98,6 +98,24 @@ describe("StatusBadge", () => {
     expect(statusLabel("error", ["malformed"])).toBe("Evaluator error (malformed) — not evaluated");
     expect(statusLabel("inconclusive", ["unsupported_claim"])).toBe("Inconclusive — unsupported claim");
     expect(statusLabel("inconclusive", ["vacuous"])).toBe("Inconclusive — response too empty to judge");
+  });
+});
+
+describe("liveAlertText", () => {
+  const rec = (status: ResponseRecord["status"]): ResponseRecord => ({ status, durationMs: 0 });
+  const runWith = (a: ResponseRecord["status"], b: ResponseRecord["status"]) => ({ responses: { a: rec(a), b: rec(b) } });
+
+  it("derives the alert from the actual response statuses", () => {
+    expect(liveAlertText(runWith("credentials_unavailable", "credentials_unavailable"))).toBe(
+      "Live mode unavailable on this deployment — this is not an evaluation result.",
+    );
+    expect(liveAlertText(runWith("timeout", "timeout"))).toBe("Live request timed out — not evaluated");
+    expect(liveAlertText(runWith("model_error", "model_error"))).toBe("Live request failed — not evaluated");
+    expect(liveAlertText(runWith("ok", "ok"))).toBeNull();
+  });
+
+  it("lists each distinct failure once when the versions differ", () => {
+    expect(liveAlertText(runWith("timeout", "model_error"))).toBe("Live request timed out — not evaluated. Live request failed — not evaluated");
   });
 });
 

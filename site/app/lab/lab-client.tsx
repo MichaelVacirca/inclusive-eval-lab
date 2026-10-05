@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { scenarioVerdict } from "../../lib/lab/evaluate";
 import { createOverride, reviewLogJson } from "../../lib/lab/overrides";
 import { LIVE_CONFIG, LIVE_RESPONDER_VERSION, makeLiveResponder, runScenario } from "../../lib/lab/run";
@@ -11,12 +11,11 @@ import { CompareView } from "./components/compare-view";
 import { Findings } from "./components/findings";
 import { Limitations, SimulatorRules } from "./components/reference";
 import { RunDetails } from "./components/run-details";
-import { BUTTON, FOCUS, statusLabel } from "./components/status";
+import { BUTTON, FOCUS, liveAlertText, statusLabel } from "./components/status";
 
 const MAX_INSTRUCTION = 4000;
 const NO_MATCH =
   "No simulator rule matched your edit; simulated output is unchanged. A real model would respond to arbitrary wording.";
-const LIVE_UNAVAILABLE = "Live mode unavailable on this deployment — this is not an evaluation result.";
 
 const FAULTS: Array<[FaultKind, string]> = [
   ["none", "None"],
@@ -49,9 +48,20 @@ export function LabClient({ baselineRuns }: { baselineRuns: Run[] }) {
   const [fault, setFault] = useState<FaultKind>("none");
   const [overrides, setOverrides] = useState<Override[]>([]);
   const [announcement, setAnnouncement] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [alert, setAlert] = useState<{ key: string; text: string } | null>(null);
   const [noMatch, setNoMatch] = useState(false);
-  const running = useRef(false);
+  const [running, setRunning] = useState(false);
+  const runningRef = useRef(false);
+  const rerunRef = useRef<HTMLButtonElement>(null);
+  const restoreFocusRef = useRef(false);
+
+  // Rerun is disabled while a run is in flight, which can drop keyboard focus; put it back afterwards.
+  useEffect(() => {
+    if (running || !restoreFocusRef.current) return;
+    restoreFocusRef.current = false;
+    const active = document.activeElement;
+    if (!active || active === document.body) rerunRef.current?.focus();
+  }, [running]);
 
   const scenario = scenarios.find((s) => s.id === scenarioId) ?? scenarios[0];
   const baseline = baselineRuns.find((r) => r.scenarioId === scenario.id);
@@ -62,7 +72,7 @@ export function LabClient({ baselineRuns }: { baselineRuns: Run[] }) {
   function chooseScenario(id: string) {
     setScenarioId(id);
     setNoMatch(false);
-    setError(null);
+    setAlert(null);
   }
 
   function setInstruction(text: string) {
@@ -74,11 +84,15 @@ export function LabClient({ baselineRuns }: { baselineRuns: Run[] }) {
   }
 
   async function rerun() {
-    if (running.current) return;
-    running.current = true;
+    if (runningRef.current) return;
+    runningRef.current = true;
+    restoreFocusRef.current = document.activeElement === rerunRef.current;
     const s = scenario;
     const n = (runCount[s.id] ?? 0) + 1;
     const live = source === "live";
+    setRunning(true);
+    setAlert(null);
+    setAnnouncement("Running…");
     try {
       const run = await runScenario(
         s,
@@ -98,11 +112,14 @@ export function LabClient({ baselineRuns }: { baselineRuns: Run[] }) {
       setView("latest");
       setAnnouncement(`Run ${n} complete: ${scenarioVerdict(run.results).headline}`);
       setNoMatch(!live && instruction !== s.baselineInstruction && matchSnippets(instruction).length === 0);
-      setError(live ? LIVE_UNAVAILABLE : null);
+      const alertText = live ? liveAlertText(run) : null;
+      setAlert(alertText ? { key: run.id, text: alertText } : null);
     } catch {
-      setError("The run could not be completed. This is not an evaluation result.");
+      setAnnouncement(`Run ${n} could not be completed.`);
+      setAlert({ key: `${s.id}-run-${n}-failed`, text: "The run could not be completed. This is not an evaluation result." });
     } finally {
-      running.current = false;
+      runningRef.current = false;
+      setRunning(false);
     }
   }
 
@@ -221,7 +238,7 @@ export function LabClient({ baselineRuns }: { baselineRuns: Run[] }) {
           </div>
         </section>
 
-        <section aria-labelledby="edit">
+        <section aria-labelledby="edit" aria-busy={running || undefined}>
           <h2 id="edit" className={H2}>
             4. Edit the instruction and rerun
           </h2>
@@ -313,16 +330,16 @@ export function LabClient({ baselineRuns }: { baselineRuns: Run[] }) {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-4">
-              <button type="button" onClick={rerun} className={`${BUTTON} px-5 py-2 font-semibold`}>
+              <button ref={rerunRef} type="button" onClick={rerun} disabled={running} className={`${BUTTON} px-5 py-2 font-semibold`}>
                 Rerun
               </button>
               <p role="status" aria-live="polite" className="text-sm text-zinc-300">
                 {announcement}
               </p>
             </div>
-            {error && (
-              <p role="alert" className="rounded-md border border-rose-400/60 p-3 text-sm text-rose-200">
-                {error}
+            {alert && (
+              <p key={alert.key} role="alert" className="rounded-md border border-rose-400/60 p-3 text-sm text-rose-200">
+                {alert.text}
               </p>
             )}
             {noMatch && <p className="rounded-md border border-zinc-600 p-3 text-sm text-zinc-300">{NO_MATCH}</p>}

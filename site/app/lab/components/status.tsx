@@ -67,6 +67,23 @@ export const RESPONSE_STATUS_TEXT: Record<ResponseStatus, string> = {
   not_run: "Not run",
 };
 
+const LIVE_ALERT: Partial<Record<ResponseStatus, string>> = {
+  credentials_unavailable: "Live mode unavailable on this deployment — this is not an evaluation result.",
+  timeout: "Live request timed out — not evaluated",
+  model_error: "Live request failed — not evaluated",
+  not_run: "Live request not run — not evaluated",
+};
+
+/** Alert text for a live run, derived from the actual response statuses (null when both are ok). */
+export function liveAlertText(run: { responses: { a: { status: ResponseStatus }; b: { status: ResponseStatus } } }): string | null {
+  const texts: string[] = [];
+  for (const v of ["a", "b"] as const) {
+    const t = LIVE_ALERT[run.responses[v].status];
+    if (t && !texts.includes(t)) texts.push(t);
+  }
+  return texts.length > 0 ? texts.join(". ") : null;
+}
+
 export function variantLabel(s: Scenario, v: ResultVariant): string {
   if (v === "a") return s.variable.a.label;
   if (v === "b") return s.variable.b.label;
