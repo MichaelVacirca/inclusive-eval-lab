@@ -84,11 +84,27 @@ jobs:
   eval:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: InclusiveCode/inclusive-ai/action@main
         with:
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
           system-prompt: "Your system prompt here"
+```
+
+Or call the reusable workflow, which installs the published `@inclusive-ai/eval` CLI for you:
+
+```yaml
+# .github/workflows/safety.yml
+name: LGBTQIA+ Safety
+on: [push, pull_request]
+jobs:
+  eval:
+    uses: InclusiveCode/inclusive-ai/.github/workflows/lgbt-safety-eval.yml@main
+    with:
+      system-prompt: "Your system prompt here"
+      eval-version: "3" # optional: a published version, range or tag
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
 ### 4. Add the pre-commit hook

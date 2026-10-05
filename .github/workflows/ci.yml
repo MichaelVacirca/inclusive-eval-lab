@@ -41,6 +41,8 @@ jobs:
       - run: npm run typecheck -w domains/content
       - run: npm run typecheck -w packages/adversarial
       - run: npm run typecheck -w packages/eval
+      - run: npm run test:workflows
+      - run: npm run typecheck:workflows
 
   site:
     name: Site Build

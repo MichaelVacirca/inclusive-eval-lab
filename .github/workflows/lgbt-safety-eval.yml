@@ -15,8 +15,14 @@ on:
         description: "Filter by severity (critical,high,medium)"
         required: false
         type: string
+      eval-version:
+        description: "@inclusive-ai/eval version to install from npm (for example 3 or 3.2.0), or \"source\" to build packages/eval from this repository"
+        required: false
+        type: string
+        default: "source"
 
-  # Reusable — other repos can call this workflow
+  # Reusable: other repositories can call this workflow. A caller's checkout
+  # doesn't contain packages/eval, so callers install the published CLI.
   workflow_call:
     inputs:
       system-prompt:
@@ -31,6 +37,11 @@ on:
         description: "Filter by severity"
         required: false
         type: string
+      eval-version:
+        description: "@inclusive-ai/eval version to install from npm (for example 3 or 3.2.0)"
+        required: false
+        type: string
+        default: "3"
     secrets:
       ANTHROPIC_API_KEY:
         required: true
@@ -42,25 +53,56 @@ jobs:
     permissions:
       contents: read
     steps:
+      # Only "source" runs need this repository's code.
       - uses: actions/checkout@v7
+        if: inputs.eval-version == 'source'
 
       - uses: actions/setup-node@v7
         with:
           node-version: 26
-          cache: npm
 
-      - run: npm ci
-      - run: npm run build
+      - name: Install the eval CLI
+        env:
+          EVAL_VERSION: ${{ inputs.eval-version }}
+        run: |
+          if [ "$EVAL_VERSION" = "source" ]; then
+            if [ ! -f packages/eval/package.json ]; then
+              echo '::error::eval-version "source" only works in the repository that contains packages/eval. Pass a published version such as 3 instead.'
+              exit 1
+            fi
+            npm ci --ignore-scripts
+            npm run build
+          else
+            # A version, range or dist-tag only: no paths, URLs, aliases or spaces.
+            version_re='^[0-9A-Za-z.^~*-]+$'
+            if ! [[ "$EVAL_VERSION" =~ $version_re ]]; then
+              echo '::error::eval-version must be a published version or tag (for example 3, 3.2.0, ^3.2.0 or latest), or "source".'
+              exit 1
+            fi
+            npm install --no-save --ignore-scripts --no-audit --no-fund \
+              --prefix "$RUNNER_TEMP/inclusive-eval" \
+              "@inclusive-ai/eval@$EVAL_VERSION" @anthropic-ai/sdk
+          fi
 
       # Inputs reach the shell only as environment variables and are passed
       # to the CLI as separate arguments, never re-parsed by the shell.
       - name: Run eval suite
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          EVAL_VERSION: ${{ inputs.eval-version }}
           EVAL_SYSTEM_PROMPT: ${{ inputs.system-prompt }}
           EVAL_CATEGORY: ${{ inputs.category }}
           EVAL_SEVERITY: ${{ inputs.severity }}
         run: |
+          if [ "$EVAL_VERSION" = "source" ]; then
+            CLI=(node packages/eval/dist/cli.js)
+          else
+            CLI=("$RUNNER_TEMP/inclusive-eval/node_modules/.bin/inclusive-eval")
+            if [ ! -x "${CLI[0]}" ]; then
+              echo "::error::inclusive-eval CLI not found in RUNNER_TEMP. The install step should have put it there."
+              exit 1
+            fi
+          fi
           ARGS=()
           if [ -n "$EVAL_SYSTEM_PROMPT" ]; then
             ARGS+=(--system "$EVAL_SYSTEM_PROMPT")
@@ -71,4 +113,4 @@ jobs:
           if [ -n "$EVAL_SEVERITY" ]; then
             ARGS+=(--severity "$EVAL_SEVERITY")
           fi
-          node packages/eval/dist/cli.js "${ARGS[@]}"
+          "${CLI[@]}" "${ARGS[@]}"
