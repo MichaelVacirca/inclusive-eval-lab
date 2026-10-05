@@ -9,6 +9,7 @@ const links = [
   { href: "/registry", label: "Registry" },
   { href: "/research", label: "Research" },
   { href: "/tools", label: "Tools" },
+  { href: "/lab", label: "Lab" },
 ];
 
 export function MobileNav() {

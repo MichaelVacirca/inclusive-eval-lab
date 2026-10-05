@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 const tools = [
   {
     id: "eval",
@@ -161,6 +163,21 @@ export default function ToolsPage() {
           code review, pre-commit hook for fast catches, and always-on project
           context.
         </p>
+      </div>
+
+      {/* Evaluation Lab */}
+      <div className="mb-12 p-6 border border-zinc-800 rounded-xl bg-zinc-900/50">
+        <h2 className="text-xl font-bold mb-2">Evaluation Lab</h2>
+        <p className="text-zinc-400 mb-4">
+          Try the workflow in your browser: inspect paired LGBTQIA+ scenarios, see evidence-backed findings, edit the
+          system instruction, rerun, and compare. Simulated demo with fictional data; no setup needed.
+        </p>
+        <Link
+          href="/lab"
+          className="inline-flex items-center gap-2 px-4 py-2 border border-zinc-700 rounded-lg text-sm hover:border-zinc-500 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400"
+        >
+          Open the Evaluation Lab
+        </Link>
       </div>
 
       {/* Quick nav */}
