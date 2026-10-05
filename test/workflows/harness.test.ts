@@ -1,8 +1,22 @@
 // Tests for the harness itself, so a broken harness can't make the
 // workflow tests pass vacuously.
 
+import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { type Sandbox, evaluateIf, makeSandbox, resolveEnv, runStep, shellArgs, withDefaults } from "./harness";
+import {
+  type Sandbox,
+  SYSTEM_PATH,
+  evaluateIf,
+  hostProgram,
+  makeSandbox,
+  pathWithout,
+  resolveEnv,
+  runStep,
+  shellArgs,
+  withDefaults,
+  writeSpy,
+  writeStub,
+} from "./harness";
 
 let sb: Sandbox;
 beforeEach(() => {
@@ -109,5 +123,72 @@ describe("runStep and the stubs", () => {
 
   it("rejects a step without a run script", () => {
     expect(() => runStep(sb, { uses: "actions/checkout@v7" }, {})).toThrow(/has no run script/);
+  });
+});
+
+describe("hostProgram", () => {
+  it("finds a program in the PATH runStep uses", () => {
+    const path = hostProgram("sha256sum");
+    expect(SYSTEM_PATH.some((dir) => path === join(dir, "sha256sum"))).toBe(true);
+  });
+
+  it("refuses a program the host doesn't have", () => {
+    expect(() => hostProgram("no-such-program-for-tests")).toThrow(/not found/);
+  });
+});
+
+describe("writeSpy", () => {
+  it("records the call and runs the real program with the same arguments", () => {
+    writeSpy(sb, "basename");
+    const r = runStep(sb, { run: "basename /a/b.txt .txt" }, {});
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe("b\n");
+    expect(r.calls).toEqual([{ prog: "basename", argv: ["/a/b.txt", ".txt"], cwd: sb.work, apiKeySet: false }]);
+  });
+
+  it("passes stdin through and the real program's exit status back", () => {
+    writeSpy(sb, "grep");
+    const found = runStep(sb, { run: "grep -c b <<< $'a\\nb'" }, {});
+    expect(found.status).toBe(0);
+    expect(found.stdout).toBe("1\n");
+    const missing = runStep(sb, { run: "grep -q z <<< abc" }, {});
+    expect(missing.status).toBe(1);
+    expect(missing.calls.map((c) => c.prog)).toEqual(["grep"]);
+  });
+
+  it("fails without running the real program when STUB_EXIT_<PROG> is set", () => {
+    writeSpy(sb, "touch");
+    const r = runStep(sb, { run: "touch made" }, {}, { STUB_EXIT_TOUCH: "5" });
+    expect(r.status).toBe(5);
+    expect(r.created).toEqual([]);
+    expect(r.calls.map((c) => [c.prog, ...c.argv])).toEqual([["touch", "made"]]);
+  });
+
+  it("can spy on the programs the recorder itself uses", () => {
+    writeSpy(sb, "wc");
+    writeSpy(sb, "find");
+    const r = runStep(sb, { run: "wc -c <<< abc" }, {});
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim()).toBe("4");
+    expect(r.calls.map((c) => [c.prog, ...c.argv])).toEqual([["wc", "-c"]]);
+  });
+});
+
+describe("pathWithout", () => {
+  it("hides the named host programs and keeps the rest", () => {
+    const PATH = pathWithout(sb, ["tar"]);
+    expect(runStep(sb, { run: "command -v tar" }, {}).status).toBe(0);
+    expect(runStep(sb, { run: "command -v tar" }, {}, { PATH }).status).not.toBe(0);
+    expect(runStep(sb, { run: "command -v sha256sum" }, {}, { PATH }).status).toBe(0);
+  });
+
+  it("keeps the sandbox's stubs first, even for a hidden name", () => {
+    writeStub(sb, join(sb.bin, "tar"), "tar");
+    const r = runStep(sb, { run: "tar -x\nnpm ci" }, {}, { PATH: pathWithout(sb, ["tar"]) });
+    expect(r.status).toBe(0);
+    expect(r.calls.map((c) => [c.prog, ...c.argv])).toEqual([
+      ["tar", "-x"],
+      ["npm", "ci"],
+    ]);
   });
 });

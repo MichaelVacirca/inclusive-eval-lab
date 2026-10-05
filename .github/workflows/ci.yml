@@ -55,3 +55,43 @@ jobs:
           cache: npm
           cache-dependency-path: site/package-lock.json
       - run: cd site && npm install && npm test && npm run build
+
+  # actionlint checks workflow syntax, expressions and job wiring, and runs
+  # shellcheck on every run: script.
+  lint-workflows:
+    name: Lint workflows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # A pinned release binary, checked against the hash below before it is
+      # unpacked or run. To upgrade, change both values and the copy of the
+      # checksums in test/workflows/lint-workflows.test.ts. The hash is the
+      # linux_amd64 line of the release's actionlint_<version>_checksums.txt.
+      - name: Run actionlint
+        env:
+          ACTIONLINT_VERSION: "1.7.12"
+          ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+        run: |
+          if [ "$RUNNER_OS" != "Linux" ] || [ "$RUNNER_ARCH" != "X64" ]; then
+            echo "::error::The pinned actionlint build is linux_amd64, but this runner is $RUNNER_OS $RUNNER_ARCH."
+            exit 1
+          fi
+          # Without shellcheck, actionlint skips its run: script checks and
+          # still passes.
+          if ! command -v shellcheck >/dev/null; then
+            echo "::error::shellcheck is not on PATH, so actionlint would not check run: scripts."
+            exit 1
+          fi
+          tarball="$RUNNER_TEMP/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL --retry 3 --retry-connrefused -o "$tarball" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          sha256sum -c <<< "$ACTIONLINT_SHA256  $tarball"
+          mkdir -p "$RUNNER_TEMP/actionlint"
+          tar -xzf "$tarball" -C "$RUNNER_TEMP/actionlint" actionlint
+          # From the repository root, actionlint lints .github/workflows/*.y{a,}ml.
+          "$RUNNER_TEMP/actionlint/actionlint"
