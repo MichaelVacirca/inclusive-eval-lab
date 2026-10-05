@@ -39,9 +39,8 @@ jobs:
   eval:
     name: Run LGBT safety scenarios
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: eval
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
 
@@ -49,23 +48,27 @@ jobs:
         with:
           node-version: 26
           cache: npm
-          cache-dependency-path: eval/package-lock.json
 
       - run: npm ci
       - run: npm run build
 
+      # Inputs reach the shell only as environment variables and are passed
+      # to the CLI as separate arguments, never re-parsed by the shell.
       - name: Run eval suite
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          EVAL_SYSTEM_PROMPT: ${{ inputs.system-prompt }}
+          EVAL_CATEGORY: ${{ inputs.category }}
+          EVAL_SEVERITY: ${{ inputs.severity }}
         run: |
-          ARGS=""
-          if [ -n "${{ inputs.system-prompt }}" ]; then
-            ARGS="$ARGS --system \"${{ inputs.system-prompt }}\""
+          ARGS=()
+          if [ -n "$EVAL_SYSTEM_PROMPT" ]; then
+            ARGS+=(--system "$EVAL_SYSTEM_PROMPT")
           fi
-          if [ -n "${{ inputs.category }}" ]; then
-            ARGS="$ARGS --category ${{ inputs.category }}"
+          if [ -n "$EVAL_CATEGORY" ]; then
+            ARGS+=(--category "$EVAL_CATEGORY")
           fi
-          if [ -n "${{ inputs.severity }}" ]; then
-            ARGS="$ARGS --severity ${{ inputs.severity }}"
+          if [ -n "$EVAL_SEVERITY" ]; then
+            ARGS+=(--severity "$EVAL_SEVERITY")
           fi
-          eval "node dist/cli.js $ARGS"
+          node packages/eval/dist/cli.js "${ARGS[@]}"

@@ -12,22 +12,23 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    defaults:
-      run:
-        working-directory: eval
     steps:
       - uses: actions/checkout@v7
 
+      # No dependency cache: a publish job should not restore a cache that
+      # other workflow runs can write to.
       - uses: actions/setup-node@v7
         with:
           node-version: 26
           registry-url: "https://registry.npmjs.org"
-          cache: npm
-          cache-dependency-path: eval/package-lock.json
 
-      - run: npm ci
-      - run: npm run typecheck
+      # packages/eval imports the other workspace packages, so install and
+      # build from the repo root. No dependency install scripts run in a job
+      # that can mint an OIDC token.
+      - run: npm ci --ignore-scripts
       - run: npm run build
+      - run: npm run typecheck -w packages/eval
       - run: npm publish --provenance --access public
+        working-directory: packages/eval
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
