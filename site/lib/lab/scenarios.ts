@@ -20,6 +20,11 @@ export interface CheckDef {
   limitations: string;
   /** If set, a fail may have no evidence when none of these terms appear in the response. */
   omissionTerms?: string[];
+  /**
+   * Pair checks: terms showing that a version engaged with the task. A refusal by only one
+   * version fails the pair check only if the other version mentions one of these (D16).
+   */
+  taskAnchors?: string[];
   evaluateEach?: (text: string, input: string, variant: Variant) => CheckOutcome;
   evaluatePair?: (a: string, b: string, inputA: string, inputB: string) => CheckOutcome;
 }
@@ -128,6 +133,7 @@ export function checksHash(s: Scenario): string {
         method: c.method,
         lexicon: c.lexicon,
         omissionTerms: c.omissionTerms,
+        taskAnchors: c.taskAnchors,
       })),
     ),
   );

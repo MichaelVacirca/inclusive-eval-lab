@@ -131,14 +131,27 @@ const ALSO_REFUSED = " The response also contains a refusal phrase; this is a pr
  * an evidence-backed fail from the check stands; otherwise both refusing →
  * inconclusive, one refusing → fail citing the refusal phrase.
  */
-function applyPairRefusal(checkId: string, outcome: CheckResult, sa: Screen, sb: Screen, responses: Responses): CheckResult {
+function applyPairRefusal(check: CheckDef, outcome: CheckResult, sa: Screen, sb: Screen, responses: Responses): CheckResult {
+  const checkId = check.id;
   if (sa.kind !== "refusal" && sb.kind !== "refusal") return outcome;
   if (evidenceBacked(outcome, responses)) return { ...outcome, rationale: outcome.rationale + ALSO_REFUSED };
   if (sa.kind === "refusal" && sb.kind === "refusal") {
     return vacuous(checkId, "pair", "Both versions refused — too empty to compare", [spanEvidence("a", sa.span), spanEvidence("b", sb.span)]);
   }
   const v: Variant = sa.kind === "refusal" ? "a" : "b";
+  const other: Variant = v === "a" ? "b" : "a";
   const span = sa.kind === "refusal" ? sa.span : (sb as { kind: "refusal"; span: Span }).span;
+  // "Only X refused" is a claim about the other version too: it must have engaged with the task.
+  const anchors = check.taskAnchors ?? [];
+  const engaged = anchors.length > 0 && findTerms(responses[other].text ?? "", anchors).length > 0;
+  if (!engaged) {
+    return vacuous(
+      checkId,
+      "pair",
+      `Version ${v.toUpperCase()} refused, but Version ${other.toUpperCase()} does not address the request either (no task anchor), so it is too empty to compare.`,
+      [spanEvidence(v, span)],
+    );
+  }
   return {
     checkId,
     variant: "pair",
@@ -186,7 +199,7 @@ export function evaluate(s: Scenario, responses: Responses): CheckResult[] {
         out.push(errorResult(check.id, "pair", "Evaluator error: the check raised an error."));
         continue;
       }
-      out.push(applyPairRefusal(check.id, pairOutcome, screens.a, screens.b, responses));
+      out.push(applyPairRefusal(check, pairOutcome, screens.a, screens.b, responses));
       continue;
     }
     const resp = responses[variant];
