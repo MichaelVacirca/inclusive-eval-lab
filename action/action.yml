@@ -56,36 +56,46 @@ runs:
       shell: bash
       run: npm install --no-save @inclusive-ai/eval @anthropic-ai/sdk
 
+    # Inputs reach the shell only as environment variables and are passed to
+    # the CLI as separate arguments, never re-parsed by the shell.
     - name: Run LGBTQIA+ safety eval
       shell: bash
       env:
         ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        EVAL_SYSTEM_PROMPT: ${{ inputs.system-prompt }}
+        EVAL_DOMAIN: ${{ inputs.domain }}
+        EVAL_CATEGORY: ${{ inputs.category }}
+        EVAL_SEVERITY: ${{ inputs.severity }}
+        EVAL_ADVERSARIAL: ${{ inputs.adversarial }}
+        EVAL_RED_TEAM: ${{ inputs.red-team }}
+        EVAL_CONCURRENCY: ${{ inputs.concurrency }}
+        EVAL_FAIL_ON: ${{ inputs.fail-on }}
       run: |
-        ARGS=""
-        if [ -n "${{ inputs.system-prompt }}" ]; then
-          ARGS="$ARGS --system \"${{ inputs.system-prompt }}\""
+        ARGS=()
+        if [ -n "$EVAL_SYSTEM_PROMPT" ]; then
+          ARGS+=(--system "$EVAL_SYSTEM_PROMPT")
         fi
-        if [ -n "${{ inputs.domain }}" ]; then
-          ARGS="$ARGS --domain ${{ inputs.domain }}"
+        if [ -n "$EVAL_DOMAIN" ]; then
+          ARGS+=(--domain "$EVAL_DOMAIN")
         fi
-        if [ -n "${{ inputs.category }}" ]; then
-          ARGS="$ARGS --category ${{ inputs.category }}"
+        if [ -n "$EVAL_CATEGORY" ]; then
+          ARGS+=(--category "$EVAL_CATEGORY")
         fi
-        if [ -n "${{ inputs.severity }}" ]; then
-          ARGS="$ARGS --severity ${{ inputs.severity }}"
+        if [ -n "$EVAL_SEVERITY" ]; then
+          ARGS+=(--severity "$EVAL_SEVERITY")
         fi
-        if [ "${{ inputs.adversarial }}" = "true" ]; then
-          ARGS="$ARGS --adversarial"
+        if [ "$EVAL_ADVERSARIAL" = "true" ]; then
+          ARGS+=(--adversarial)
         fi
-        if [ "${{ inputs.red-team }}" = "true" ]; then
-          ARGS="$ARGS --red-team"
+        if [ "$EVAL_RED_TEAM" = "true" ]; then
+          ARGS+=(--red-team)
         fi
-        if [ -n "${{ inputs.concurrency }}" ] && [ "${{ inputs.concurrency }}" != "5" ]; then
-          ARGS="$ARGS --concurrency ${{ inputs.concurrency }}"
+        if [ -n "$EVAL_CONCURRENCY" ] && [ "$EVAL_CONCURRENCY" != "5" ]; then
+          ARGS+=(--concurrency "$EVAL_CONCURRENCY")
         fi
-        eval "npx inclusive-eval $ARGS"
+        npx --no-install inclusive-eval "${ARGS[@]}"
         EXIT_CODE=$?
-        if [ "${{ inputs.fail-on }}" = "NEEDS_WORK" ] && [ $EXIT_CODE -eq 0 ]; then
+        if [ "$EVAL_FAIL_ON" = "NEEDS_WORK" ] && [ $EXIT_CODE -eq 0 ]; then
           # Re-run with stricter check — parse output for NEEDS_WORK
           echo "Checking for NEEDS_WORK verdict..."
         fi
