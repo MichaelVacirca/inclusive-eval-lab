@@ -85,11 +85,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: InclusiveCode/inclusive-ai/action@main
+      # Pinning a commit SHA instead of @main is the safest option.
+      - uses: MichaelVacirca/inclusive-eval-lab/action@main
         with:
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
           system-prompt: "Your system prompt here"
+          eval-version: "3" # optional: a published version, range or tag
+          fail-on: NEEDS_WORK # optional: also fail on NEEDS_WORK (PARTIAL in red-team mode)
 ```
+
+The action installs the published `@inclusive-ai/eval` CLI into the runner's temp directory, so it doesn't touch your `package.json`, lockfile or `node_modules`, and it runs no install scripts.
 
 Or call the reusable workflow, which installs the published `@inclusive-ai/eval` CLI for you:
 
