@@ -236,7 +236,7 @@ export function caretFloor(range: unknown): string | undefined {
   return isVersion(version) && !version.includes("-") ? version : undefined;
 }
 
-/** a <= b for plain x.y.z versions. */
+/** a <= b, comparing major.minor.patch only: a is a plain x.y.z, and a prerelease suffix on b is ignored. */
 function atMost(a: string, b: string): boolean {
   const pa = a.split(".").map(Number);
   const pb = b.split(/[.-]/).slice(0, 3).map(Number);
@@ -246,9 +246,11 @@ function atMost(a: string, b: string): boolean {
 
 /**
  * Everything that would make a release of the alias wrong. It must point npm
- * at this repository, start the CLI through bin.js and nothing else, depend
- * only on the CLI and the SDK, take the SDK range the root tests the CLI with,
- * and ask for a CLI version this repository has reached, in the same major.
+ * at this repository, start the CLI through bin.js and nothing else, have no
+ * scripts, depend only on the CLI and the SDK, take the SDK range the root
+ * tests the CLI with, and ask for a CLI version this repository has reached
+ * (ignoring a prerelease suffix here, e.g. a beta of the next major), in the
+ * same major.
  * With `version`, the alias must be at exactly that version.
  */
 export function aliasProblems(
@@ -263,6 +265,8 @@ export function aliasProblems(
   const at = alias.dir;
   if (m.name !== ALIAS_NAME) problems.push(`${at}: name ${JSON.stringify(m.name)} is not ${JSON.stringify(ALIAS_NAME)}`);
   if (m.private === true) problems.push(`${at}: is marked private`);
+  // npm publish runs lifecycle scripts, and an alias release installs nothing to check them against.
+  if (m.scripts !== undefined) problems.push(`${at}: has scripts, which npm would run when publishing`);
   if (typeof m.version !== "string" || !isVersion(m.version)) {
     problems.push(`${at}: version ${JSON.stringify(m.version)} is not a valid version`);
   } else if (version !== undefined && m.version !== version) {

@@ -207,6 +207,23 @@ describe("publish-eval.yml", () => {
   });
 });
 
+describe("scripts/release.mts", () => {
+  const source = readFileSync(join(REPO_ROOT, "scripts/release.mts"), "utf8");
+  const specifiers = [...source.matchAll(/^\s*(?:import|export)\b[^;]*?\bfrom\s+["']([^"']+)["']/gm), ...source.matchAll(/\bimport\s*\(\s*["']([^"']+)["']/g)].map(
+    (m) => m[1],
+  );
+
+  it("imports only Node built-ins, since alias releases run it without npm ci", () => {
+    expect(specifiers.length).toBeGreaterThanOrEqual(4);
+    for (const s of specifiers) expect(s, s).toMatch(/^node:/);
+  });
+
+  it("has no bare or side-effect imports the pattern above would miss", () => {
+    expect(source).not.toMatch(/^\s*import\s+["']/m);
+    expect(source).not.toMatch(/\brequire\s*\(/);
+  });
+});
+
 describe("publish-eval.yml: the tag-on-main check", () => {
   const step = stepNamed(allSteps(docs[".github/workflows/publish-eval.yml"]), "Check the tag is on main");
   const SHA = "0123456789abcdef0123456789abcdef01234567";
@@ -290,6 +307,13 @@ describe("docs/releasing.md", () => {
     );
     expect(guide).toContain(`\`${ALIAS_NAME}\` included, set **Settings → Publishing access**`);
     expect(guide).toContain("## Releasing the inclusive-eval alias");
+    const section = guide.slice(guide.indexOf("## Releasing the inclusive-eval alias"));
+    expect(section.indexOf(`Before the first \`${ALIAS_TAG_PREFIX}*\` tag`)).toBeGreaterThan(-1);
+    expect(section.indexOf(`Before the first \`${ALIAS_TAG_PREFIX}*\` tag`)).toBeLessThan(section.indexOf("To release it:"));
+  });
+
+  it("says a major bump moves the alias's CLI range too", () => {
+    expect(guide).toContain("For a new major version, also move the alias's `@inclusive-ai/eval` range");
   });
 
   it("explains the npm settings people stop at: direct publish, dist-tag and no edits", () => {

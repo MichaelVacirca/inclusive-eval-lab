@@ -162,7 +162,7 @@ describe("the repository's packages", () => {
 
   it("include an alias that is ready to release (what CI checks)", () => {
     expect(aliasProblems(readAlias(), workspaces, rootSdkRange())).toEqual([]);
-    expect(rootSdkRange()).toMatch(/^\^0\.\d+\.\d+$/);
+    expect(rootSdkRange()).toMatch(/^\^\d+\.\d+\.\d+$/);
   });
 
   it("include an alias that ships the MIT license text too", () => {
@@ -800,6 +800,8 @@ describe("aliasProblems", () => {
     [{ name: "inclusive-evals" }, /^alias: name "inclusive-evals" is not "inclusive-eval"$/],
     [{ name: undefined }, /^alias: name undefined is not "inclusive-eval"$/],
     [{ private: true }, /^alias: is marked private$/],
+    [{ scripts: { prepublishOnly: "node evil.js" } }, /^alias: has scripts, which npm would run when publishing$/],
+    [{ scripts: {} }, /^alias: has scripts/],
     [{ version: "1.0" }, /^alias: version "1\.0" is not a valid version$/],
     [{ version: 103 }, /^alias: version 103 is not a valid version$/],
     [{ repository: { type: "git", url: "git+https://github.com/InclusiveCode/inclusive-ai.git", directory: ALIAS_DIR } }, /^alias: repository must be /],

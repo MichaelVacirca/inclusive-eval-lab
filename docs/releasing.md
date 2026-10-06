@@ -70,6 +70,8 @@ npm trust github inclusive-eval --file publish-eval.yml --repo MichaelVacirca/in
    node scripts/release.mts check
    ```
 
+   For a new major version, also move the alias's `@inclusive-ai/eval` range in `alias/package.json` to the new major (`^4.0.0` for 4.0.0) in the same pull request; `check` fails until you do.
+
 2. Commit, open a pull request, and merge it once CI is green. CI runs `node scripts/release.mts check` on every change.
 3. Tag the merge commit on `main`, one release at a time. Either push the tag:
 
@@ -101,8 +103,15 @@ node scripts/release.mts publish eval-v3.4.0 --dry-run
 
 `node scripts/release.mts check` (which CI runs) also checks the alias:
 - its SDK range must equal the root `package.json`'s, so a change to the root SDK range fails CI until the alias follows;
-- its `@inclusive-ai/eval` range must be a caret range in this repository's major version, no higher than the version here;
-- it must depend on nothing else, and point npm at this repository with `directory` `alias`.
+- its `@inclusive-ai/eval` range must be a caret range in this repository's major version, no higher than the version here (a prerelease suffix here is ignored, so `^4.0.0` passes while `main` is at `4.0.0-beta.1`; the publish step still waits for 4.0.0 on npm);
+- it must depend on nothing else, have no scripts, and point npm at this repository with `directory` `alias`.
+
+CI keeps the alias on `main` in step with the root SDK range, but the published alias only changes when it is released. When a CLI release moves the root SDK range, release the alias right after that CLI release, or `npx inclusive-eval` runs the new CLI with the old SDK.
+
+Before the first `alias-v*` tag, check the one-time setup covers the alias (it fails safe if it doesn't: the run is refused or the publish is rejected):
+- the `npm` environment has a tag rule for `alias-v*`, and the tag ruleset targets `alias-v*`;
+- `inclusive-eval` has the trusted publisher on npmjs.com;
+- once its first trusted-publishing release is out, its publishing access disallows tokens.
 
 To release it:
 
