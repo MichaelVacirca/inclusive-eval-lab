@@ -23,7 +23,10 @@ export async function createAnthropicJudge(model: string): Promise<EvalJudge> {
   const { default: Anthropic } = await import("@anthropic-ai/sdk");
   const { betaJSONSchemaOutputFormat } = await import("@anthropic-ai/sdk/helpers/beta/json-schema");
   const client = new Anthropic();
-  const format = betaJSONSchemaOutputFormat(JUDGE_VERDICT_SCHEMA);
+  // Hand the answer text to parseJudgeVerdict, which returns undefined for anything
+  // that is not a verdict. The helper's own parse throws on text that is not JSON,
+  // such as an answer cut off at max_tokens, and that would end the whole run.
+  const format = { ...betaJSONSchemaOutputFormat(JUDGE_VERDICT_SCHEMA), parse: (text: string) => text };
 
   return {
     async grade(scenario, output) {
