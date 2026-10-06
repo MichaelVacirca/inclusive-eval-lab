@@ -16,7 +16,7 @@ import {
   workflowFiles,
   writeStub,
 } from "./harness";
-import { REPOSITORY_URL, TAG_PREFIX, publishable, readWorkspaces } from "../../scripts/release.mts";
+import { ALIAS_NAME, ALIAS_TAG_PREFIX, REPOSITORY_URL, TAG_PREFIX, publishable, readWorkspaces } from "../../scripts/release.mts";
 
 const FILES = [...workflowFiles(), "action/action.yml"];
 const docs = Object.fromEntries(FILES.map((f) => [f, loadYaml(f)]));
@@ -137,8 +137,8 @@ describe("publish-eval.yml", () => {
   const steps: Step[] = job.steps;
   const setup = steps.find((s) => s.uses?.startsWith("actions/setup-node@"));
 
-  it("only runs for tags with the release script's prefix", () => {
-    expect(doc.on).toEqual({ push: { tags: [`${TAG_PREFIX}*`] } });
+  it("only runs for tags with the release script's prefixes: the packages' and the alias's", () => {
+    expect(doc.on).toEqual({ push: { tags: [`${TAG_PREFIX}*`, `${ALIAS_TAG_PREFIX}*`] } });
   });
 
   it("never runs two releases at once or cancels one halfway", () => {
@@ -185,9 +185,42 @@ describe("publish-eval.yml", () => {
     }
   });
 
-  it("is named for the packages it publishes", () => {
-    expect(doc.name).toBe("Publish @inclusive-ai packages");
+  it("installs, builds, typechecks and tests only for package releases; every release checks out, checks the tag and publishes", () => {
+    const onlyPackages = `startsWith(github.ref_name, '${TAG_PREFIX}')`;
+    const conditions = Object.fromEntries(steps.map((s) => [s.name ?? s.uses ?? s.run?.trim(), s.if]));
+    expect(conditions).toEqual({
+      "actions/checkout@v7": undefined,
+      "Check the tag is on main": undefined,
+      "actions/setup-node@v7": undefined,
+      "npm ci --ignore-scripts": onlyPackages,
+      'node scripts/release.mts check "$GITHUB_REF_NAME"': undefined,
+      "npm run build": onlyPackages,
+      "npm run typecheck": onlyPackages,
+      "npm test": onlyPackages,
+      'node scripts/release.mts publish "$GITHUB_REF_NAME"': undefined,
+    });
+  });
+
+  it("is named for what it publishes, not just the @inclusive-ai scope", () => {
+    expect(doc.name).toBe("Publish npm packages");
     for (const w of readWorkspaces()) expect(String(w.manifest.name)).toMatch(/^@inclusive-ai\//);
+  });
+});
+
+describe("scripts/release.mts", () => {
+  const source = readFileSync(join(REPO_ROOT, "scripts/release.mts"), "utf8");
+  const specifiers = [...source.matchAll(/^\s*(?:import|export)\b[^;]*?\bfrom\s+["']([^"']+)["']/gm), ...source.matchAll(/\bimport\s*\(\s*["']([^"']+)["']/g)].map(
+    (m) => m[1],
+  );
+
+  it("imports only Node built-ins, since alias releases run it without npm ci", () => {
+    expect(specifiers.length).toBeGreaterThanOrEqual(4);
+    for (const s of specifiers) expect(s, s).toMatch(/^node:/);
+  });
+
+  it("has no bare or side-effect imports the pattern above would miss", () => {
+    expect(source).not.toMatch(/^\s*import\s+["']/m);
+    expect(source).not.toMatch(/\brequire\s*\(/);
   });
 });
 
@@ -214,11 +247,20 @@ describe("publish-eval.yml: the tag-on-main check", () => {
     expect(r.stdout).toContain("::error::eval-v3.3.0 is not on main. Tag a commit that has been merged.");
   });
 
+  it("checks alias tags the same way", () => {
+    expect(run(0, "alias-v1.0.3").status).toBe(0);
+    const r = run(1, "alias-v1.0.3");
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("::error::alias-v1.0.3 is not on main. Tag a commit that has been merged.");
+  });
+
   it("never runs the tag name as a command", () => {
     for (const payload of Object.values(INJECTION_PAYLOADS)) {
-      const r = run(1, `eval-v${payload}`);
-      expect(r.created).toEqual([]);
-      expect(r.status).toBe(1);
+      for (const prefix of [TAG_PREFIX, ALIAS_TAG_PREFIX]) {
+        const r = run(1, `${prefix}${payload}`);
+        expect(r.created).toEqual([]);
+        expect(r.status).toBe(1);
+      }
     }
   });
 });
@@ -241,16 +283,37 @@ describe("docs/releasing.md", () => {
     expect(guide).toContain("`npm publish`");
   });
 
-  it("uses the tag prefix the workflow is triggered by", () => {
+  it("uses the tag prefixes the workflow is triggered by", () => {
     expect(guide).toContain(`git push origin ${TAG_PREFIX}`);
+    expect(guide).toContain(`git push origin ${ALIAS_TAG_PREFIX}`);
   });
 
-  it("protects the environment and the release tags before the first release", () => {
+  it("names the run to approve as the workflow is named", () => {
+    expect(guide).toContain(`Approve the **${docs[".github/workflows/publish-eval.yml"].name}** run`);
+  });
+
+  it("protects the environment and both kinds of release tag before the first release", () => {
     expect(guide).toContain("**Required reviewers:**");
     expect(guide).toContain("**Allow administrators to bypass configured protection rules**");
-    expect(guide).toContain(`pattern \`${TAG_PREFIX}*\``);
-    expect(guide).toContain(`tag ruleset**, targeting tags matching \`${TAG_PREFIX}*\``);
+    expect(guide).toContain(`two rules of type **Tag**: pattern \`${TAG_PREFIX}*\` and pattern \`${ALIAS_TAG_PREFIX}*\``);
+    expect(guide).toContain(`tag ruleset**, targeting tags matching \`${TAG_PREFIX}*\` and \`${ALIAS_TAG_PREFIX}*\``);
     expect(guide.indexOf("### 1. GitHub")).toBeLessThan(guide.indexOf("### 2. npm"));
+  });
+
+  it("covers the alias: its trusted publisher, its publishing access and how to release it", () => {
+    expect(guide).toContain(`and for \`${ALIAS_NAME}\`, on npmjs.com`);
+    expect(guide).toContain(
+      `\nnpm trust github ${ALIAS_NAME} --file publish-eval.yml --repo MichaelVacirca/inclusive-eval-lab --env npm --allow-publish\n`,
+    );
+    expect(guide).toContain(`\`${ALIAS_NAME}\` included, set **Settings → Publishing access**`);
+    expect(guide).toContain("## Releasing the inclusive-eval alias");
+    const section = guide.slice(guide.indexOf("## Releasing the inclusive-eval alias"));
+    expect(section.indexOf(`Before the first \`${ALIAS_TAG_PREFIX}*\` tag`)).toBeGreaterThan(-1);
+    expect(section.indexOf(`Before the first \`${ALIAS_TAG_PREFIX}*\` tag`)).toBeLessThan(section.indexOf("To release it:"));
+  });
+
+  it("says a major bump moves the alias's CLI range too", () => {
+    expect(guide).toContain("For a new major version, also move the alias's `@inclusive-ai/eval` range");
   });
 
   it("explains the npm settings people stop at: direct publish, dist-tag and no edits", () => {

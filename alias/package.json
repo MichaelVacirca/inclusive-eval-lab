@@ -1,0 +1,27 @@
+{
+  "name": "inclusive-eval",
+  "version": "1.0.3",
+  "description": "Official alias for @inclusive-ai/eval: runs the InclusiveCode LGBTQIA+ safety eval CLI with the Anthropic SDK included.",
+  "type": "module",
+  "bin": {
+    "inclusive-eval": "bin.js"
+  },
+  "files": [
+    "bin.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
+    "@inclusive-ai/eval": "^3.3.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MichaelVacirca/inclusive-eval-lab.git",
+    "directory": "alias"
+  },
+  "homepage": "https://github.com/InclusiveCode/inclusive-ai#readme"
+}

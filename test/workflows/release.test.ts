@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  ALIAS_DIR,
+  ALIAS_NAME,
+  ALIAS_TAG_PREFIX,
   type Manifest,
   REPOSITORY_URL,
   ROOT,
@@ -11,16 +14,22 @@ import {
   type RunResult,
   TAG_PREFIX,
   type Workspace,
+  aliasProblems,
   bumped,
+  caretFloor,
   distTag,
   isPublished,
   isVersion,
   main,
+  publishAlias,
   publishAll,
   publishOrder,
   publishable,
+  readAlias,
   readWorkspaces,
+  releaseFromTag,
   releaseProblems,
+  rootSdkRange,
   versionFromTag,
 } from "../../scripts/release.mts";
 import { INJECTION_PAYLOADS, REPO_ROOT } from "./harness";
@@ -51,6 +60,22 @@ const EVAL = pkg("packages/eval", "@inclusive-ai/eval", {
   "@inclusive-ai/eval-core": `^${V}`,
 });
 const SET = [EVAL, IDENTITY, CORE, CONTENT];
+
+const SDK = "^0.131.0";
+const ALIAS_V = "1.0.3";
+const ALIAS_DEPS = { "@anthropic-ai/sdk": SDK, "@inclusive-ai/eval": `^${V}` };
+const ALIAS: Workspace = {
+  dir: ALIAS_DIR,
+  manifest: {
+    name: ALIAS_NAME,
+    version: ALIAS_V,
+    bin: { [ALIAS_NAME]: "bin.js" },
+    files: ["bin.js", "README.md"],
+    dependencies: ALIAS_DEPS,
+    license: "MIT",
+    repository: { type: "git", url: REPOSITORY_URL, directory: ALIAS_DIR },
+  },
+};
 
 const names = (ws: Workspace[]) => ws.map((w) => w.manifest.name);
 
@@ -128,6 +153,21 @@ describe("the repository's packages", () => {
       expect(w.manifest.license, w.dir).toBe("MIT");
       expect(readFileSync(join(REPO_ROOT, w.dir, "LICENSE"), "utf8"), `${w.dir}/LICENSE`).toBe(license);
     }
+  });
+
+  it("leave the alias out of the workspaces and the lockfile", () => {
+    expect(workspaces.map((w) => w.dir)).not.toContain(ALIAS_DIR);
+    expect(Object.keys(lock.packages)).not.toContain(ALIAS_DIR);
+  });
+
+  it("include an alias that is ready to release (what CI checks)", () => {
+    expect(aliasProblems(readAlias(), workspaces, rootSdkRange())).toEqual([]);
+    expect(rootSdkRange()).toMatch(/^\^\d+\.\d+\.\d+$/);
+  });
+
+  it("include an alias that ships the MIT license text too", () => {
+    expect(readAlias().manifest.license).toBe("MIT");
+    expect(readFileSync(join(REPO_ROOT, ALIAS_DIR, "LICENSE"), "utf8")).toBe(readFileSync(join(REPO_ROOT, "LICENSE"), "utf8"));
   });
 
   it("point npm at this repository, the one the README sends people to", () => {
@@ -460,13 +500,19 @@ describe("publishAll", () => {
 describe("main, on a scratch repository", () => {
   function scratchRepo(): string {
     const root = mkdtempSync(join(tmpdir(), "release-test-"));
-    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "x", private: true, workspaces: ["core/*", "packages/eval"] }));
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ name: "x", private: true, workspaces: ["core/*", "packages/eval"], devDependencies: { "@anthropic-ai/sdk": SDK } }),
+    );
     for (const w of [CORE, EVAL]) {
       mkdirSync(join(root, w.dir), { recursive: true });
       const deps = w === EVAL ? { "@inclusive-ai/eval-core": `^${V}` } : w.manifest.dependencies;
       writeFileSync(join(root, w.dir, "package.json"), JSON.stringify({ ...w.manifest, dependencies: deps }));
     }
     mkdirSync(join(root, "core", "notes"));
+    mkdirSync(join(root, ALIAS_DIR));
+    writeFileSync(join(root, ALIAS_DIR, "package.json"), JSON.stringify(ALIAS.manifest));
+    writeFileSync(join(root, ALIAS_DIR, "bin.js"), "");
     return root;
   }
   const silent = () => {
@@ -501,11 +547,61 @@ describe("main, on a scratch repository", () => {
     expect(releaseProblems(readWorkspaces(root), "3.4.0")).toEqual([]);
   });
 
+  it("check without a tag also checks the alias", () => {
+    const root = scratchRepo();
+    writeFileSync(join(root, ALIAS_DIR, "package.json"), JSON.stringify({ ...ALIAS.manifest, dependencies: { ...ALIAS_DEPS, "@anthropic-ai/sdk": "^0.78.0" } }));
+    const { out, restore } = silent();
+    try {
+      expect(main(["check"], fakeNpm().run, root)).toBe(1);
+      expect(main(["check", `eval-v${V}`], fakeNpm().run, root)).toBe(0);
+      expect(main(["check", `alias-v${ALIAS_V}`], fakeNpm().run, root)).toBe(1);
+    } finally {
+      restore();
+    }
+    expect(out).toContain('error: alias: @anthropic-ai/sdk is "^0.78.0", expected "^0.131.0" as in the root package.json');
+    expect(out).toContain(`ok: 2 packages ready for eval-v${V}`);
+  });
+
+  it("says what is ready", () => {
+    const root = scratchRepo();
+    const { out, restore } = silent();
+    try {
+      main(["check"], fakeNpm().run, root);
+      main(["check", `alias-v${ALIAS_V}`], fakeNpm().run, root);
+      main(["check", "nope"], fakeNpm().run, root);
+    } finally {
+      restore();
+    }
+    expect(out).toEqual([
+      "ok: 2 packages and the inclusive-eval alias ready",
+      `ok: inclusive-eval ready for alias-v${ALIAS_V}`,
+      'error: tag "nope" starts with neither eval-v (the @inclusive-ai/ packages) nor alias-v (the inclusive-eval alias)',
+    ]);
+  });
+
+  it("publish with an alias tag publishes only the alias", () => {
+    const root = scratchRepo();
+    const npm = fakeNpm([`@inclusive-ai/eval@${V}`]);
+    const { out, restore } = silent();
+    try {
+      expect(main(["publish", `alias-v${ALIAS_V}`], npm.run, root)).toBe(0);
+    } finally {
+      restore();
+    }
+    expect(npm.calls.filter((c) => c.args[0] === "publish").map((c) => c.cwd)).toEqual([join(root, ALIAS_DIR)]);
+    expect(out.at(-1)).toBe("published: inclusive-eval");
+  });
+
   it.each([
     [["check"], 0],
     [["check", "eval-v3.3.0"], 0],
     [["check", "eval-v3.4.0"], 1],
+    [["check", `alias-v${ALIAS_V}`], 0],
+    [["check", "alias-v9.9.9"], 1],
+    [["check", "alias-v"], 1],
     [["check", "nope"], 1],
+    [["publish", "alias-v9.9.9"], 1],
+    [["publish", `alias-v${ALIAS_V}`], 1],
     [["bump", "3.4"], 1],
     [[], 2],
     [["release"], 2],
@@ -615,5 +711,216 @@ describe("the release script as a process, with a fake npm on PATH", () => {
     const r = runScript(["publish"]);
     expect(r.status).toBe(2);
     expect(r.out).toMatch(/^usage: /m);
+  });
+
+  const alias = readAlias();
+  const aliasVersion = String(alias.manifest.version);
+  const floor = caretFloor((alias.manifest.dependencies as Record<string, string>)["@inclusive-ai/eval"]);
+
+  it("checks the alias from any working directory", () => {
+    const r = runScript(["check", `alias-v${aliasVersion}`]);
+    expect(r.out).toContain(`ok: inclusive-eval ready for alias-v${aliasVersion}`);
+    expect(r.status).toBe(0);
+    expect(r.calls).toEqual([]);
+  });
+
+  it("publishes only the alias, from alias/, once the CLI version it needs is on npm", () => {
+    const r = runScript(["publish", `alias-v${aliasVersion}`], { FAKE_PUBLISHED: "@inclusive-ai/eval" });
+    expect(r.status).toBe(0);
+    expect(r.calls).toEqual([
+      [REPO_ROOT, `view @inclusive-ai/eval@${floor} version --json --loglevel=silent`],
+      [REPO_ROOT, `view inclusive-eval@${aliasVersion} version --json --loglevel=silent`],
+      [join(REPO_ROOT, ALIAS_DIR), "publish --access public"],
+    ]);
+  });
+
+  it("refuses to publish the alias before the CLI version it needs is on npm", () => {
+    const r = runScript(["publish", `alias-v${aliasVersion}`]);
+    expect(r.status).toBe(1);
+    expect(r.calls.filter(([, args]) => args.startsWith("publish"))).toEqual([]);
+    expect(r.out).toContain(`inclusive-eval@${aliasVersion} needs @inclusive-ai/eval@${floor}, which is not on npm`);
+  });
+});
+
+describe("releaseFromTag", () => {
+  it.each([
+    ["eval-v3.4.0", { kind: "packages", version: "3.4.0" }],
+    ["alias-v1.0.3", { kind: "alias", version: "1.0.3" }],
+    ["alias-v1.1.0-beta.1", { kind: "alias", version: "1.1.0-beta.1" }],
+  ])("reads %j", (tag, release) => {
+    expect(releaseFromTag(tag)).toEqual(release);
+  });
+
+  it.each(["alias-v", "alias-v1.0", "alias-vv1.0.3", "alias-v1.0.3 ", "eval-v", "eval-v1"])("refuses %j, which has a prefix but no version", (tag) => {
+    expect(() => releaseFromTag(tag)).toThrow(/does not name a version like (alias|eval)-v1\.2\.3/);
+  });
+
+  it.each(["nope", "v1.0.3", "alias-1.0.3", "Alias-v1.0.3", "", "inclusive-eval@1.0.3"])("refuses %j, naming both prefixes", (tag) => {
+    expect(() => releaseFromTag(tag)).toThrow(/starts with neither eval-v .* nor alias-v /);
+  });
+
+  it("reads the alias prefix through versionFromTag too", () => {
+    expect(versionFromTag("alias-v1.0.3", ALIAS_TAG_PREFIX)).toBe("1.0.3");
+    expect(() => versionFromTag("alias-v1.0.3")).toThrow(/does not start with eval-v/);
+    expect(() => versionFromTag("eval-v1.0.3", ALIAS_TAG_PREFIX)).toThrow(/does not start with alias-v/);
+  });
+});
+
+describe("caretFloor", () => {
+  it.each([
+    ["^3.4.0", "3.4.0"],
+    ["^0.131.0", "0.131.0"],
+  ])("%j starts at %j", (range, floor) => {
+    expect(caretFloor(range)).toBe(floor);
+  });
+
+  it.each(["3.4.0", "~3.4.0", ">=3.4.0", "*", "^3.4", "^3.4.0-beta.1", "^ 3.4.0", "^3.4.0 || ^4.0.0", "", undefined, 3])(
+    "has none for %j",
+    (range) => {
+      expect(caretFloor(range)).toBeUndefined();
+    },
+  );
+});
+
+describe("aliasProblems", () => {
+  const alias = (change: Manifest = {}): Workspace => ({ dir: ALIAS_DIR, manifest: { ...ALIAS.manifest, ...change } });
+  const problems = (change: Manifest = {}, version?: string) => aliasProblems(alias(change), SET, SDK, ROOT, version);
+  const withEval = (range: string) => ({ dependencies: { ...ALIAS_DEPS, "@inclusive-ai/eval": range } });
+
+  it("accepts the alias, with or without the tag's version", () => {
+    expect(problems()).toEqual([]);
+    expect(problems({}, ALIAS_V)).toEqual([]);
+  });
+
+  it("refuses a tag for another version", () => {
+    expect(problems({}, "1.0.4")).toEqual([`the tag names 1.0.4, but the alias is at ${ALIAS_V}`]);
+  });
+
+  it.each<[Manifest, RegExp]>([
+    [{ name: "inclusive-evals" }, /^alias: name "inclusive-evals" is not "inclusive-eval"$/],
+    [{ name: undefined }, /^alias: name undefined is not "inclusive-eval"$/],
+    [{ private: true }, /^alias: is marked private$/],
+    [{ scripts: { prepublishOnly: "node evil.js" } }, /^alias: has scripts, which npm would run when publishing$/],
+    [{ scripts: {} }, /^alias: has scripts/],
+    [{ version: "1.0" }, /^alias: version "1\.0" is not a valid version$/],
+    [{ version: 103 }, /^alias: version 103 is not a valid version$/],
+    [{ repository: { type: "git", url: "git+https://github.com/InclusiveCode/inclusive-ai.git", directory: ALIAS_DIR } }, /^alias: repository must be /],
+    [{ repository: { type: "git", url: REPOSITORY_URL } }, /^alias: repository must be /],
+    [{ repository: { type: "git", url: REPOSITORY_URL, directory: "packages/eval" } }, /^alias: repository must be /],
+    [{ repository: REPOSITORY_URL }, /^alias: repository must be /],
+    [{ bin: "bin.js" }, /^alias: bin must be \{"inclusive-eval":"bin\.js"\}, got "bin\.js"$/],
+    [{ bin: { "inclusive-eval": "cli.js" } }, /^alias: bin must be /],
+    [{ bin: { "inclusive-eval": "bin.js", "other": "bin.js" } }, /^alias: bin must be /],
+    [{ bin: undefined }, /^alias: bin must be /],
+    [{ files: ["README.md"] }, /^alias: files must include "bin\.js", got \["README\.md"\]$/],
+    [{ files: undefined }, /^alias: files must include "bin\.js"/],
+    [{ dependencies: { ...ALIAS_DEPS, openai: "^6.0.0" } }, /^alias: dependencies must be exactly @inclusive-ai\/eval and @anthropic-ai\/sdk/],
+    [{ dependencies: { "@inclusive-ai/eval": `^${V}` } }, /^alias: dependencies must be exactly/],
+    [{ dependencies: undefined }, /^alias: dependencies must be exactly/],
+    [{ dependencies: { ...ALIAS_DEPS, "@anthropic-ai/sdk": "^0.78.0" } }, /^alias: @anthropic-ai\/sdk is "\^0\.78\.0", expected "\^0\.131\.0" as in the root package\.json$/],
+    [{ dependencies: { ...ALIAS_DEPS, "@anthropic-ai/sdk": "0.131.0" } }, /^alias: @anthropic-ai\/sdk is "0\.131\.0", expected/],
+  ])("refuses %j", (change, message) => {
+    const found = problems(change);
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatch(message);
+  });
+
+  it.each(["*", "3.3.0", "~3.3.0", ">=3.3.0", "^3.3", "^3.3.0-beta.1", "latest", "file:../packages/eval"])(
+    "refuses the CLI range %j, which isn't a plain caret range",
+    (range) => {
+      expect(problems(withEval(range))).toEqual([
+        `alias: @inclusive-ai/eval is ${JSON.stringify(range)}, expected a caret range like "^3.4.0"`,
+      ]);
+    },
+  );
+
+  it.each(["^3.3.1", "^3.4.0", "^4.0.0", "^2.0.0", "^2.9.9"])("refuses %j, a CLI version this repository's 3.3.0 doesn't satisfy", (range) => {
+    expect(problems(withEval(range))).toEqual([`alias: @inclusive-ai/eval is "${range}", but this repository's @inclusive-ai/eval is ${V}`]);
+  });
+
+  it.each(["^3.0.0", "^3.2.9", `^${V}`])("accepts %j, which this repository's 3.3.0 satisfies", (range) => {
+    expect(problems(withEval(range))).toEqual([]);
+  });
+
+  it("compares with the CLI workspace's version even when it is a prerelease", () => {
+    const pre = SET.map((w) => (w === EVAL ? { dir: w.dir, manifest: { ...w.manifest, version: "3.4.0-beta.1" } } : w));
+    expect(aliasProblems(alias(withEval("^3.4.0")), pre, SDK, ROOT)).toEqual([]);
+    expect(aliasProblems(alias(withEval("^3.5.0")), pre, SDK, ROOT)).toHaveLength(1);
+  });
+
+  it("refuses when there is no root SDK range or no CLI workspace to compare with", () => {
+    expect(aliasProblems(alias(), SET, undefined, ROOT)).toEqual(["root package.json has no @anthropic-ai/sdk devDependency to compare the alias with"]);
+    expect(aliasProblems(alias(), [CORE], SDK, ROOT)).toEqual([
+      `alias: can't compare @inclusive-ai/eval "^${V}" with the workspace version undefined`,
+    ]);
+  });
+
+  it("refuses an alias whose bin.js is missing", () => {
+    const root = mkdtempSync(join(tmpdir(), "alias-test-"));
+    expect(aliasProblems(alias(), SET, SDK, root)).toEqual(["alias: bin.js is missing"]);
+  });
+
+  it("reports every problem at once", () => {
+    expect(problems({ name: "x", private: true, files: [], bin: {} }, "9.9.9")).toHaveLength(5);
+  });
+});
+
+describe("publishAlias", () => {
+  const evalOut = `@inclusive-ai/eval@${V}`;
+  const tag = `alias-v${ALIAS_V}`;
+  const publishCalls = (calls: { args: string[] }[]) => calls.filter((c) => c.args[0] === "publish");
+
+  it("checks the CLI version it needs is on npm, then publishes from alias/", () => {
+    const npm = fakeNpm([evalOut]);
+    expect(publishAlias(ALIAS, SET, SDK, tag, npm.run, quiet)).toEqual([ALIAS_NAME]);
+    expect(npm.calls).toEqual([
+      { args: ["view", evalOut, "version", "--json", "--loglevel=silent"], cwd: ROOT, capture: true },
+      { args: ["view", `inclusive-eval@${ALIAS_V}`, "version", "--json", "--loglevel=silent"], cwd: ROOT, capture: true },
+      { args: ["publish", "--access", "public"], cwd: join(ROOT, ALIAS_DIR), capture: false },
+    ]);
+  });
+
+  it("refuses, without publishing, while the CLI version it needs is not on npm", () => {
+    const npm = fakeNpm([]);
+    expect(() => publishAlias(ALIAS, SET, SDK, tag, npm.run, quiet)).toThrow(
+      `inclusive-eval@${ALIAS_V} needs @inclusive-ai/eval@${V}, which is not on npm`,
+    );
+    expect(publishCalls(npm.calls)).toEqual([]);
+  });
+
+  it("skips a version that is already on npm", () => {
+    const lines: string[] = [];
+    const npm = fakeNpm([evalOut, `inclusive-eval@${ALIAS_V}`]);
+    expect(publishAlias(ALIAS, SET, SDK, tag, npm.run, { log: (l) => lines.push(l) })).toEqual([]);
+    expect(publishCalls(npm.calls)).toEqual([]);
+    expect(lines).toEqual([`inclusive-eval@${ALIAS_V} is already on npm, skipping`]);
+  });
+
+  it("publishes a prerelease under next, and passes --dry-run through", () => {
+    const pre = { dir: ALIAS_DIR, manifest: { ...ALIAS.manifest, version: "1.1.0-beta.1" } };
+    const npm = fakeNpm([evalOut]);
+    publishAlias(pre, SET, SDK, "alias-v1.1.0-beta.1", npm.run, { ...quiet, dryRun: true });
+    expect(publishCalls(npm.calls).map((c) => c.args)).toEqual([["publish", "--access", "public", "--tag", "next", "--dry-run"]]);
+  });
+
+  it("throws when npm publish fails", () => {
+    const npm = fakeNpm([evalOut], () => 1);
+    expect(() => publishAlias(ALIAS, SET, SDK, tag, npm.run, quiet)).toThrow(`npm publish failed for inclusive-eval@${ALIAS_V} (exit 1)`);
+  });
+
+  it("publishes nothing if it can't tell whether the CLI version is out", () => {
+    const run: RunNpm = (args) =>
+      args[0] === "view" ? { status: 1, stdout: JSON.stringify({ error: { code: "E403", summary: "Forbidden" } }) } : { status: 0, stdout: "" };
+    expect(() => publishAlias(ALIAS, SET, SDK, tag, run, quiet)).toThrow(/npm view @inclusive-ai\/eval@3\.3\.0 failed \(exit 1\): Forbidden/);
+  });
+
+  it.each([
+    ["alias-v1.0.4", /the tag names 1\.0\.4, but the alias is at 1\.0\.3/],
+    [`eval-v${ALIAS_V}`, /does not start with alias-v/],
+    ["alias-vlatest", /does not name a version/],
+  ])("refuses %j before calling npm", (badTag, message) => {
+    const npm = fakeNpm([evalOut]);
+    expect(() => publishAlias(ALIAS, SET, SDK, badTag, npm.run, quiet)).toThrow(message);
+    expect(npm.calls).toEqual([]);
   });
 });
