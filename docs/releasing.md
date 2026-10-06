@@ -25,6 +25,7 @@ Do this before the first release tag, so the first release is already protected.
 
 1. **Settings → Environments → New environment**, named `npm`.
    - **Required reviewers:** add yourself, so every release waits for your approval.
+   - **Allow administrators to bypass configured protection rules** is ticked by default. Untick it if the approval should also apply to you as an admin.
    - **Deployment branches and tags:** "Selected branches and tags", with one rule of type **Tag** and pattern `eval-v*`.
 2. **Settings → Rules → Rulesets → New tag ruleset**, targeting tags matching `eval-v*`. Restrict creations, updates and deletions, and leave only yourself on the bypass list, so nobody else can push or move a release tag.
 
@@ -38,10 +39,10 @@ For **each** of the eight packages, on npmjs.com:
    - **Repository:** `inclusive-eval-lab`
    - **Workflow filename:** `publish-eval.yml`
    - **Environment name:** `npm`
-3. Under allowed actions, tick **`npm publish`**. New trusted publishers default to staged publishing only, and the release has to publish directly.
+3. Under allowed actions, tick **`npm publish`**. New trusted publishers default to staged publishing only, and the release has to publish directly. npm labels direct publishing "Not recommended" because staged versions wait for a manual promotion on npmjs.com; here the required reviewer on the `npm` environment is that human gate instead. Leave **Allow npm dist-tag** unticked: the workflow never runs `npm dist-tag` (a prerelease's `next` tag travels inside the publish request).
 4. Save.
 
-npm doesn't check the settings when you save them. A typo shows up only during a release, as an authentication error on that package.
+npm doesn't check the settings when you save them, and a saved trusted publisher can't be edited ("Cannot be changed later"). A typo shows up only during a release, as an authentication error on that package; to fix it, delete that connection and add a new one.
 
 The same setup from a terminal, logged in to npm as the packages' owner:
 
@@ -53,7 +54,7 @@ done
 
 ### 3. After the first release has gone out
 
-1. On npmjs.com, for **each** package, set **Settings → Publishing access** to "Require two-factor authentication and disallow tokens", so only the trusted publisher (or you, with 2FA) can publish.
+1. On npmjs.com, for **each** package, set **Settings → Publishing access** to "Require two-factor authentication and disallow bypass 2fa tokens (recommended)", so only the trusted publisher (or you, with 2FA) can publish. npm's documentation calls this "Require two-factor authentication and disallow tokens".
 2. Delete the old `NPM_TOKEN` repository secret if it exists (Settings → Secrets and variables → Actions), and revoke that token on npmjs.com (Access Tokens). Nothing uses it any more.
 
 ## Cutting a release
@@ -67,14 +68,18 @@ done
    ```
 
 2. Commit, open a pull request, and merge it once CI is green. CI runs `node scripts/release.mts check` on every change.
-3. Tag the merge commit on `main` and push the tag. Push one release tag at a time.
+3. Tag the merge commit on `main`, one release at a time. Either push the tag:
 
    ```bash
    git tag eval-v3.4.0 <merge commit>
    git push origin eval-v3.4.0
    ```
 
+   or, on GitHub, open **Releases → Draft a new release**, type `eval-v3.4.0` as a new tag with target `main`, and publish the release. Either way only a repository admin can create the tag, because of the `eval-v*` tag ruleset; automation without admin rights, such as a coding agent's push, is refused.
+
 4. Approve the **Publish @inclusive-ai packages** run when GitHub asks, and watch it.
+
+A new version can take several minutes to show up on npm after the run publishes it (npm says "Your package is being processed"), and packages from the same run can appear at different times. Wait for all of them before installing the release or re-running the job; a re-run inside that window fails harmlessly, because npm refuses to publish over a version it already accepted.
 
 If a release fails partway because of something outside the repository (a trusted-publisher typo, a registry outage), fix that and re-run the job; packages that already went out are skipped. If the fix needs a code change, release it as a new version, because a tag stays on its commit.
 
