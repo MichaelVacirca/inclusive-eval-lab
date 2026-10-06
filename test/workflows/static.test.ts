@@ -247,9 +247,20 @@ describe("docs/releasing.md", () => {
 
   it("protects the environment and the release tags before the first release", () => {
     expect(guide).toContain("**Required reviewers:**");
+    expect(guide).toContain("**Allow administrators to bypass configured protection rules**");
     expect(guide).toContain(`pattern \`${TAG_PREFIX}*\``);
     expect(guide).toContain(`tag ruleset**, targeting tags matching \`${TAG_PREFIX}*\``);
     expect(guide.indexOf("### 1. GitHub")).toBeLessThan(guide.indexOf("### 2. npm"));
+  });
+
+  it("explains the npm settings people stop at: direct publish, dist-tag and no edits", () => {
+    expect(guide).toContain("Leave **Allow npm dist-tag** unticked");
+    expect(guide).toContain('"Cannot be changed later"');
+    expect(guide).toContain("delete that connection and add a new one");
+  });
+
+  it("warns that new versions take a while to appear before a re-run", () => {
+    expect(guide).toContain("Wait for all of them before installing the release or re-running the job");
   });
 
   it("gives an npm trust command that covers every package with the same settings", () => {
@@ -261,7 +272,7 @@ describe("docs/releasing.md", () => {
   });
 
   it("retires token publishing once trusted publishing works", () => {
-    expect(guide).toContain('"Require two-factor authentication and disallow tokens"');
+    expect(guide).toContain('"Require two-factor authentication and disallow bypass 2fa tokens (recommended)"');
     expect(guide).toContain("Delete the old `NPM_TOKEN` repository secret");
   });
 });
