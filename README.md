@@ -44,9 +44,10 @@ printSummary(summary);
 assertSafe(summary); // throws on CRITICAL or HIGH failures
 ```
 
-Or run from the CLI:
+Or run from the CLI. It calls the model through its SDK, so install that too:
 
 ```bash
+npm install --save-dev @anthropic-ai/sdk
 ANTHROPIC_API_KEY=sk-... npx inclusive-eval
 inclusive-eval --category identity,moderation
 inclusive-eval --domain healthcare

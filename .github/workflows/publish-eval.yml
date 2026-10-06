@@ -1,34 +1,60 @@
-name: Publish @inclusive-ai/eval
+name: Publish @inclusive-ai packages
 
 on:
   push:
     tags:
       - "eval-v*"
 
+# One release at a time, and a publish that has started is never cancelled
+# halfway through.
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+
 jobs:
   publish:
     name: Publish to npm
     runs-on: ubuntu-latest
+    # npm trusted publishing: each package on npmjs.com trusts this
+    # repository, this workflow file and this environment, so no npm token is
+    # stored anywhere. docs/releasing.md has the settings.
+    environment: npm
     permissions:
       contents: read
       id-token: write
     steps:
+      # Full history, so the tag can be checked against main.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
-      # No dependency cache: a publish job should not restore a cache that
-      # other workflow runs can write to.
+      - name: Check the tag is on main
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME is not on main. Tag a commit that has been merged."
+            exit 1
+          fi
+
+      # No registry-url: npm defaults to registry.npmjs.org, and setup-node's
+      # .npmrc would add a token placeholder that npm falls back
+      # to when the OIDC exchange fails, hiding the real error. No dependency
+      # cache either: a publish job should not restore a cache that other
+      # workflow runs can write to.
       - uses: actions/setup-node@v7
         with:
           node-version: 26
-          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
 
-      # packages/eval imports the other workspace packages, so install and
-      # build from the repo root. No dependency install scripts run in a job
-      # that can mint an OIDC token.
+      # The packages import each other, so install, build and test from the
+      # repo root. Dependency install scripts are skipped, but the build and
+      # test tools still run in this job, which can mint an OIDC token.
       - run: npm ci --ignore-scripts
+      - run: node scripts/release.mts check "$GITHUB_REF_NAME"
       - run: npm run build
-      - run: npm run typecheck -w packages/eval
-      - run: npm publish --provenance --access public
-        working-directory: packages/eval
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - run: npm run typecheck
+      - run: npm test
+
+      # Dependencies first. Versions already on npm are skipped, so re-running
+      # a failed release is safe.
+      - run: node scripts/release.mts publish "$GITHUB_REF_NAME"

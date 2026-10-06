@@ -1,7 +1,13 @@
 {
   "name": "@inclusive-ai/domain-content",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "description": "Content platforms domain — recommendation, moderation parity, advertising, content generation eval scenarios",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MichaelVacirca/inclusive-eval-lab.git",
+    "directory": "domains/content"
+  },
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -12,14 +18,16 @@
       "require": "./dist/index.cjs"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@inclusive-ai/eval-core": "*"
+    "@inclusive-ai/eval-core": "^3.3.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
