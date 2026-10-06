@@ -1,6 +1,6 @@
 {
   "name": "@inclusive-ai/domain-healthcare",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "description": "Healthcare domain — transition care, mental health intake, reproductive health, provider matching, medical records eval scenarios",
   "license": "MIT",
   "repository": {
@@ -27,7 +27,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@inclusive-ai/eval-core": "^3.3.0"
+    "@inclusive-ai/eval-core": "^3.4.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

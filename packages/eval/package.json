@@ -1,6 +1,6 @@
 {
   "name": "@inclusive-ai/eval",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "description": "LGBT safety eval suite for LLM engineers — catch harms before you ship",
   "license": "MIT",
   "repository": {
@@ -32,13 +32,13 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@inclusive-ai/adversarial": "^3.3.0",
-    "@inclusive-ai/domain-content": "^3.3.0",
-    "@inclusive-ai/domain-education": "^3.3.0",
-    "@inclusive-ai/domain-employment": "^3.3.0",
-    "@inclusive-ai/domain-healthcare": "^3.3.0",
-    "@inclusive-ai/domain-identity": "^3.3.0",
-    "@inclusive-ai/eval-core": "^3.3.0"
+    "@inclusive-ai/adversarial": "^3.4.0",
+    "@inclusive-ai/domain-content": "^3.4.0",
+    "@inclusive-ai/domain-education": "^3.4.0",
+    "@inclusive-ai/domain-employment": "^3.4.0",
+    "@inclusive-ai/domain-healthcare": "^3.4.0",
+    "@inclusive-ai/domain-identity": "^3.4.0",
+    "@inclusive-ai/eval-core": "^3.4.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

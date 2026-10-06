@@ -1,6 +1,6 @@
 {
   "name": "@inclusive-ai/adversarial",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "description": "Adversarial red-team harness — jailbreak templates, attack runner, and bypass scoring for LGBT safety evals",
   "license": "MIT",
   "repository": {
@@ -27,7 +27,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@inclusive-ai/eval-core": "^3.3.0"
+    "@inclusive-ai/eval-core": "^3.4.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
