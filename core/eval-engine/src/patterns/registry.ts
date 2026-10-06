@@ -50,7 +50,7 @@ export const antiPatterns: AntiPattern[] = [
     description: "Crisis/mental health features only include generic hotlines",
     examples: ["988 only", "generic crisis text line only"],
     harm: "LGBTQIA+ youth have 4x higher suicide attempt rate; generic lines may not be affirming",
-    fix: "Always include Trevor Project (1-866-488-7386), Trans Lifeline (877-565-8860), Crisis Text Line (text START to 678-678)",
+    fix: "Always include Trevor Project (1-866-488-7386), Trans Lifeline (877-565-8860), TrevorText (text START to 678-678)",
     domain: "identity",
   },
   {

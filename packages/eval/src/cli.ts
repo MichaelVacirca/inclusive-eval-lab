@@ -3,7 +3,14 @@
 import { runEval } from "@inclusive-ai/eval-core";
 import { allScenarios, domains } from "./index";
 import { CliReporter, JsonReporter, SarifReporter } from "@inclusive-ai/eval-core";
-import type { TextEvalScenario } from "@inclusive-ai/eval-core";
+import type { EvalJudge, TextEvalScenario } from "@inclusive-ai/eval-core";
+import { checkOutputPath, writeJsonReport } from "./output-file";
+import {
+  DEFAULT_ANTHROPIC_JUDGE_MODEL,
+  DEFAULT_OPENAI_JUDGE_MODEL,
+  createAnthropicJudge,
+  createOpenAIJudge,
+} from "./judges";
 
 async function main() {
   const args = process.argv.slice(2);
@@ -25,6 +32,29 @@ async function main() {
   const concurrencyRaw = getArg("--concurrency");
   const concurrency = concurrencyRaw ? parseInt(concurrencyRaw, 10) : 5;
   const model = getArg("--model") ?? "claude-haiku-4-5-20251001";
+  // --output <file> also writes the JSON report (with each model reply) to a file
+  const outputPath = getArg("--output");
+  if (hasFlag("--output")) {
+    const outputError = checkOutputPath(outputPath);
+    if (outputError) {
+      console.error(outputError);
+      process.exit(1);
+    }
+  }
+  const saveJsonReport = (json: string) => {
+    if (!outputPath) return;
+    writeJsonReport(outputPath, json);
+    // stderr, so the note does not mix into the report on stdout
+    console.error(`JSON report written to ${outputPath}`);
+  };
+  // --judge grades each reply with an LLM judge instead of the keyword check;
+  // --judge-model <id> picks the judge model and implies --judge
+  const judgeModelArg = getArg("--judge-model");
+  if (hasFlag("--judge-model") && (!judgeModelArg || judgeModelArg.startsWith("--"))) {
+    console.error("--judge-model needs a model ID, e.g. --judge-model claude-opus-5-5");
+    process.exit(1);
+  }
+  const useJudge = hasFlag("--judge") || hasFlag("--judge-model");
 
   const apiKey = process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -109,6 +139,14 @@ async function main() {
     process.exit(1);
   }
 
+  let judge: EvalJudge | undefined;
+  if (useJudge) {
+    const judgeModel =
+      judgeModelArg ?? (isOpenAI ? DEFAULT_OPENAI_JUDGE_MODEL : DEFAULT_ANTHROPIC_JUDGE_MODEL);
+    judge = isOpenAI ? await createOpenAIJudge(judgeModel) : await createAnthropicJudge(judgeModel);
+    console.log(`Judge: ${isOpenAI ? "OpenAI" : "Anthropic"} (${judgeModel})`);
+  }
+
   // ── --red-team: wrap selected domain scenarios with all 15 attack templates ──
   if (useRedTeam) {
     const { runAdversarial, computeBypassScore, AdversarialReporter, allTemplates } =
@@ -126,6 +164,9 @@ async function main() {
 
     console.log(`Running red-team: ${targetScenarios.length} scenarios × ${allTemplates.length} templates`);
     console.log(`= ${targetScenarios.length * allTemplates.length} attacks + ${targetScenarios.length} baselines`);
+    if (judge) {
+      console.log(`Judge calls: ${targetScenarios.length * (allTemplates.length + 1)} (one per attack and baseline)`);
+    }
     if (concurrencyRaw) {
       console.log(`Concurrency: ${concurrency}`);
     }
@@ -133,9 +174,11 @@ async function main() {
     const results = await runAdversarial(runner, targetScenarios, {
       templates: allTemplates,
       concurrency,
+      judge,
       onResult: (r) => {
         if (r.bypassed) {
-          console.log(`  [BYPASS] ${r.scenarioId} via ${r.attackId}`);
+          const why = r.attackJudgeReason ? ` (Judge: ${r.attackJudgeReason})` : "";
+          console.log(`  [BYPASS] ${r.scenarioId} via ${r.attackId}${why}`);
         }
       },
     });
@@ -148,6 +191,7 @@ async function main() {
       : reporter.reportCli(score);
 
     console.log(output);
+    saveJsonReport(reporter.reportJson(score));
     process.exit(score.verdict === "VULNERABLE" ? 1 : 0);
     return;
   }
@@ -171,6 +215,7 @@ async function main() {
 
     const summary = await runEval(runner, filteredScenarios, {
       severities: severityFilter,
+      judge,
     });
 
     const reporter =
@@ -179,6 +224,7 @@ async function main() {
       new CliReporter();
 
     console.log(reporter.report(summary.results, summary));
+    saveJsonReport(new JsonReporter().report(summary.results, summary));
     process.exit(summary.verdict === "FAIL" ? 1 : 0);
     return;
   }
@@ -197,6 +243,7 @@ async function main() {
   const summary = await runEval(runner, scenarios, {
     categories: resolvedCategories,
     severities: severityFilter,
+    judge,
   });
 
   const reporter =
@@ -205,6 +252,7 @@ async function main() {
     new CliReporter();
 
   console.log(reporter.report(summary.results, summary));
+  saveJsonReport(new JsonReporter().report(summary.results, summary));
   process.exit(summary.verdict === "FAIL" ? 1 : 0);
 }
 

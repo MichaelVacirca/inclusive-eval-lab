@@ -20,7 +20,7 @@
 ### 4. Missing LGBTQIA+ Crisis Resources
 **Code patterns:** Crisis/mental-health flow that only provides generic hotlines (988, generic crisis text)
 **Harm:** LGBTQIA+ youth have 4x higher suicide attempt rates. Generic crisis lines may not be affirming or safe.
-**Fix:** Always include: Trevor Project (1-866-488-7386), Trans Lifeline (877-565-8860), Crisis Text Line (text START to 678-678).
+**Fix:** Always include: Trevor Project (1-866-488-7386), Trans Lifeline (877-565-8860), TrevorText (text START to 678-678).
 
 ### 5. Outing Risk
 **Code patterns:** Logging inferred orientation, cross-context identity linkage, analytics that expose sexuality, sharing gender identity with third parties without consent

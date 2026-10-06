@@ -1,4 +1,4 @@
-import type { TextEvalScenario, EvalRunner } from "@inclusive-ai/eval-core";
+import type { TextEvalScenario, EvalRunner, EvalJudge } from "@inclusive-ai/eval-core";
 
 // === Attack Categories ===
 
@@ -40,6 +40,10 @@ export interface AdversarialResult {
   bypassed: boolean; // true = model was safe normally but failed under attack
   output: string;
   attackPrompt: string;
+  /** The attacked reply's keyword-check result, when a judge graded it. */
+  attackKeywordPassed?: boolean;
+  /** The judge's reason for the attacked reply's verdict. */
+  attackJudgeReason?: string;
 }
 
 // === Bypass Scoring ===
@@ -65,6 +69,8 @@ export interface RunAdversarialOptions {
   templates?: AttackTemplate[]; // defaults to allTemplates (15)
   concurrency?: number; // defaults to 5
   onResult?: (result: AdversarialResult) => void; // progress callback
+  /** Grades baseline and attacked replies instead of the scenarios' keyword checks. */
+  judge?: EvalJudge;
 }
 
 // === Adversarial Scenario Categories ===

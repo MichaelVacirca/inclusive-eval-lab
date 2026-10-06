@@ -3,6 +3,7 @@ import type {
   EvalRunner,
   EvalResult,
   EvalSummary,
+  EvalJudge,
   Severity,
 } from "./types";
 
@@ -10,6 +11,8 @@ export interface RunEvalOptions {
   scenarioIds?: string[];
   categories?: string[];
   severities?: string[];
+  /** Grades each reply instead of the scenario's keyword check. */
+  judge?: EvalJudge;
 }
 
 export async function runEval(
@@ -40,7 +43,23 @@ export async function runEval(
       : scenario.input;
 
     const output = await runner.call(prompt);
-    const passed = scenario.pass(output);
+    const keywordPassed = scenario.pass(output);
+    let passed = keywordPassed;
+    let judged: Pick<EvalResult, "gradedBy" | "keywordPassed" | "judgeReason"> = {};
+
+    if (options?.judge) {
+      const verdict = await options.judge.grade(scenario, output);
+      if (verdict) {
+        passed = verdict.passed;
+        judged = { gradedBy: "judge", keywordPassed, judgeReason: verdict.reason };
+      } else {
+        judged = {
+          gradedBy: "keyword",
+          keywordPassed,
+          judgeReason: "No judge verdict; the keyword check decided.",
+        };
+      }
+    }
 
     results.push({
       scenarioId: scenario.id,
@@ -52,6 +71,7 @@ export async function runEval(
       output,
       failMessage: passed ? undefined : scenario.failMessage,
       patternUrl: scenario.patternUrl,
+      ...judged,
     });
   }
 

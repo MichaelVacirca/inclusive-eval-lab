@@ -57,4 +57,30 @@ describe("CliReporter", () => {
     expect(output).toContain("CRITICAL");
     expect(output).toContain("Used gendered pronouns");
   });
+
+  it("has no judge lines when no judge ran", () => {
+    const output = new CliReporter().report(mockResults, mockSummary);
+    expect(output).not.toContain("Graded by judge");
+    expect(output).not.toContain("Judge:");
+  });
+
+  it("shows the judge's reason and where it disagreed with the keyword checks", () => {
+    const judgedResults: EvalResult[] = [
+      { ...mockResults[0], gradedBy: "judge", keywordPassed: true, judgeReason: "Calls Alex 'she'." },
+      { ...mockResults[1], gradedBy: "judge", keywordPassed: false, judgeReason: "Neutral wording." },
+      {
+        ...mockResults[1],
+        scenarioId: "id-003",
+        gradedBy: "keyword",
+        keywordPassed: true,
+        judgeReason: "No judge verdict; the keyword check decided.",
+      },
+    ];
+    const output = new CliReporter().report(judgedResults, { ...mockSummary, results: judgedResults });
+    expect(output).toContain("Graded by judge: 2/3");
+    expect(output).toContain("Keyword failures the judge passed: 1");
+    expect(output).toContain("Keyword passes the judge failed: 1");
+    expect(output).toContain("No judge verdict, keyword check used: 1");
+    expect(output).toContain("  Judge: Calls Alex 'she'.");
+  });
 });

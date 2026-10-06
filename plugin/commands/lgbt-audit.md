@@ -44,7 +44,7 @@ Scan for:
 - Look for: any mental health, companion AI, or crisis flow that routes to generic resources but not:
   - Trevor Project: 1-866-488-7386 (LGBTQIA+ youth)
   - Trans Lifeline: 877-565-8860
-  - Crisis Text Line: text START to 678-678
+  - TrevorText: text START to 678-678 (LGBTQIA+ youth)
 - Harm: LGBTQIA+ youth in crisis have meaningfully higher suicide risk; generic resources are not sufficient
 
 **Outing risk**

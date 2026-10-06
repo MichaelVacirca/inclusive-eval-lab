@@ -1,6 +1,6 @@
 {
   "name": "@inclusive-ai/domain-content",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "description": "Content platforms domain — recommendation, moderation parity, advertising, content generation eval scenarios",
   "license": "MIT",
   "repository": {
@@ -27,7 +27,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@inclusive-ai/eval-core": "^3.3.0"
+    "@inclusive-ai/eval-core": "^3.4.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

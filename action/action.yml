@@ -77,7 +77,7 @@ runs:
         fi
         npm install --no-save --ignore-scripts --no-audit --no-fund \
           --prefix "$RUNNER_TEMP/inclusive-eval" \
-          "@inclusive-ai/eval@$EVAL_VERSION" "@anthropic-ai/sdk@^0.78.0"
+          "@inclusive-ai/eval@$EVAL_VERSION" "@anthropic-ai/sdk@^0.131.0"
 
     # Inputs reach the shell only as environment variables and are passed to
     # the CLI as separate arguments, never re-parsed by the shell.

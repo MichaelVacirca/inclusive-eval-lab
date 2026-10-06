@@ -10,6 +10,8 @@ export type {
   AnyEvalScenario,
   EvalScenario,
   EvalRunner,
+  EvalJudge,
+  JudgeVerdict,
   EvalResult,
   EvalSummary,
   EvalContext,
@@ -25,6 +27,9 @@ export { KNOWN_CATEGORIES } from "./types";
 // Runner
 export { runEval } from "./runner";
 export type { RunEvalOptions } from "./runner";
+
+// LLM judge: prompt, verdict schema and parser, shared by provider-specific judges
+export { JUDGE_SYSTEM_PROMPT, JUDGE_VERDICT_SCHEMA, buildJudgePrompt, parseJudgeVerdict } from "./judge";
 
 // Adapters
 export { TextAdapter } from "./adapters";
