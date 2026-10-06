@@ -1,9 +1,12 @@
-name: Publish @inclusive-ai packages
+name: Publish npm packages
 
+# eval-v<version> releases the eight @inclusive-ai packages; alias-v<version>
+# releases the inclusive-eval alias in alias/, which has its own version.
 on:
   push:
     tags:
       - "eval-v*"
+      - "alias-v*"
 
 # One release at a time, and a publish that has started is never cancelled
 # halfway through.
@@ -48,13 +51,20 @@ jobs:
 
       # The packages import each other, so install, build and test from the
       # repo root. Dependency install scripts are skipped, but the build and
-      # test tools still run in this job, which can mint an OIDC token.
-      - run: npm ci --ignore-scripts
+      # test tools still run in this job, which can mint an OIDC token. The
+      # alias has nothing to build and runs the published CLI, so an alias
+      # release skips these steps; the release script needs only Node.
+      - if: startsWith(github.ref_name, 'eval-v')
+        run: npm ci --ignore-scripts
       - run: node scripts/release.mts check "$GITHUB_REF_NAME"
-      - run: npm run build
-      - run: npm run typecheck
-      - run: npm test
+      - if: startsWith(github.ref_name, 'eval-v')
+        run: npm run build
+      - if: startsWith(github.ref_name, 'eval-v')
+        run: npm run typecheck
+      - if: startsWith(github.ref_name, 'eval-v')
+        run: npm test
 
       # Dependencies first. Versions already on npm are skipped, so re-running
-      # a failed release is safe.
+      # a failed release is safe. An alias release first checks that the CLI
+      # version its range starts at is on npm.
       - run: node scripts/release.mts publish "$GITHUB_REF_NAME"

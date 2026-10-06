@@ -1,10 +1,12 @@
-// Checks, bumps and publishes the @inclusive-ai workspace packages.
+// Checks, bumps and publishes the @inclusive-ai workspace packages, and the
+// inclusive-eval alias in alias/, which is released on its own.
 //
-//   node scripts/release.mts check [tag]            consistency checks; with a tag, also that it names the version
+//   node scripts/release.mts check [tag]            consistency checks; with a tag, only that release, and that the tag names its version
 //   node scripts/release.mts bump <version>         set every package's version and internal dependency ranges
 //   node scripts/release.mts publish <tag> [--dry-run]
 //
-// .github/workflows/publish-eval.yml runs `check` and `publish` for eval-v* tags.
+// eval-v<version> tags release the eight packages, alias-v<version> tags the alias.
+// .github/workflows/publish-eval.yml runs `check` and `publish` for both.
 // docs/releasing.md describes the whole release.
 
 import { spawnSync } from "node:child_process";
@@ -15,6 +17,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 export const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 export const SCOPE = "@inclusive-ai/";
 export const TAG_PREFIX = "eval-v";
+export const ALIAS_TAG_PREFIX = "alias-v";
+export const ALIAS_NAME = "inclusive-eval";
+// Outside the workspaces, so npm ci, the builds and the eval-v* releases leave it alone.
+export const ALIAS_DIR = "alias";
+const EVAL_NAME = `${SCOPE}eval`;
+const SDK_NAME = "@anthropic-ai/sdk";
 // npm trusted publishing only accepts packages whose repository.url matches
 // the GitHub repository that runs the publish workflow.
 export const REPOSITORY_URL = "git+https://github.com/MichaelVacirca/inclusive-eval-lab.git";
@@ -54,11 +62,26 @@ export function isVersion(version: string): boolean {
 }
 
 /** "eval-v3.3.0" -> "3.3.0". Throws for anything that isn't the prefix plus a version. */
-export function versionFromTag(tag: string): string {
-  if (!tag.startsWith(TAG_PREFIX)) throw new Error(`tag ${JSON.stringify(tag)} does not start with ${TAG_PREFIX}`);
-  const version = tag.slice(TAG_PREFIX.length);
-  if (!isVersion(version)) throw new Error(`tag ${JSON.stringify(tag)} does not name a version like ${TAG_PREFIX}1.2.3`);
+export function versionFromTag(tag: string, prefix: string = TAG_PREFIX): string {
+  if (!tag.startsWith(prefix)) throw new Error(`tag ${JSON.stringify(tag)} does not start with ${prefix}`);
+  const version = tag.slice(prefix.length);
+  if (!isVersion(version)) throw new Error(`tag ${JSON.stringify(tag)} does not name a version like ${prefix}1.2.3`);
   return version;
+}
+
+export interface Release {
+  /** "packages": the eight @inclusive-ai packages. "alias": the inclusive-eval alias. */
+  kind: "packages" | "alias";
+  version: string;
+}
+
+/** What a tag releases. Throws for a tag with neither prefix, or without a valid version. */
+export function releaseFromTag(tag: string): Release {
+  if (tag.startsWith(ALIAS_TAG_PREFIX)) return { kind: "alias", version: versionFromTag(tag, ALIAS_TAG_PREFIX) };
+  if (tag.startsWith(TAG_PREFIX)) return { kind: "packages", version: versionFromTag(tag) };
+  throw new Error(
+    `tag ${JSON.stringify(tag)} starts with neither ${TAG_PREFIX} (the ${SCOPE} packages) nor ${ALIAS_TAG_PREFIX} (the ${ALIAS_NAME} alias)`,
+  );
 }
 
 /**
@@ -195,6 +218,95 @@ export function releaseProblems(workspaces: Workspace[], version?: string): stri
   return problems;
 }
 
+/** The alias package in alias/. */
+export function readAlias(root: string = ROOT): Workspace {
+  return { dir: ALIAS_DIR, manifest: JSON.parse(readFileSync(join(root, ALIAS_DIR, "package.json"), "utf8")) as Manifest };
+}
+
+/** The root package.json's range for the SDK, which the CLI is built and tested against. */
+export function rootSdkRange(root: string = ROOT): unknown {
+  const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as Manifest;
+  return isObject(manifest.devDependencies) ? manifest.devDependencies[SDK_NAME] : undefined;
+}
+
+/** "^3.3.0" -> "3.3.0". undefined for any other kind of range. */
+export function caretFloor(range: unknown): string | undefined {
+  if (typeof range !== "string" || !range.startsWith("^")) return undefined;
+  const version = range.slice(1);
+  return isVersion(version) && !version.includes("-") ? version : undefined;
+}
+
+/** a <= b for plain x.y.z versions. */
+function atMost(a: string, b: string): boolean {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(/[.-]/).slice(0, 3).map(Number);
+  for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] < pb[i];
+  return true;
+}
+
+/**
+ * Everything that would make a release of the alias wrong. It must point npm
+ * at this repository, start the CLI through bin.js and nothing else, depend
+ * only on the CLI and the SDK, take the SDK range the root tests the CLI with,
+ * and ask for a CLI version this repository has reached, in the same major.
+ * With `version`, the alias must be at exactly that version.
+ */
+export function aliasProblems(
+  alias: Workspace,
+  workspaces: Workspace[],
+  sdkRange: unknown,
+  root: string = ROOT,
+  version?: string,
+): string[] {
+  const problems: string[] = [];
+  const m = alias.manifest;
+  const at = alias.dir;
+  if (m.name !== ALIAS_NAME) problems.push(`${at}: name ${JSON.stringify(m.name)} is not ${JSON.stringify(ALIAS_NAME)}`);
+  if (m.private === true) problems.push(`${at}: is marked private`);
+  if (typeof m.version !== "string" || !isVersion(m.version)) {
+    problems.push(`${at}: version ${JSON.stringify(m.version)} is not a valid version`);
+  } else if (version !== undefined && m.version !== version) {
+    problems.push(`the tag names ${version}, but the alias is at ${m.version}`);
+  }
+
+  const repo = m.repository;
+  if (!isObject(repo) || repo.type !== "git" || repo.url !== REPOSITORY_URL || repo.directory !== at) {
+    problems.push(`${at}: repository must be {"type":"git","url":"${REPOSITORY_URL}","directory":"${at}"}, got ${JSON.stringify(repo)}`);
+  }
+
+  const bin = m.bin;
+  if (!isObject(bin) || Object.keys(bin).length !== 1 || bin[ALIAS_NAME] !== "bin.js") {
+    problems.push(`${at}: bin must be {"${ALIAS_NAME}":"bin.js"}, got ${JSON.stringify(bin)}`);
+  }
+  if (!existsSync(join(root, at, "bin.js"))) problems.push(`${at}: bin.js is missing`);
+  if (!Array.isArray(m.files) || !m.files.includes("bin.js")) {
+    problems.push(`${at}: files must include "bin.js", got ${JSON.stringify(m.files)}`);
+  }
+
+  const deps = isObject(m.dependencies) ? m.dependencies : {};
+  const names = Object.keys(deps).sort();
+  if (names.join(",") !== [SDK_NAME, EVAL_NAME].sort().join(",")) {
+    problems.push(`${at}: dependencies must be exactly ${EVAL_NAME} and ${SDK_NAME}, got ${JSON.stringify(names)}`);
+  }
+  if (typeof sdkRange !== "string") {
+    problems.push(`root package.json has no ${SDK_NAME} devDependency to compare the alias with`);
+  } else if (SDK_NAME in deps && deps[SDK_NAME] !== sdkRange) {
+    problems.push(`${at}: ${SDK_NAME} is ${JSON.stringify(deps[SDK_NAME])}, expected ${JSON.stringify(sdkRange)} as in the root package.json`);
+  }
+  if (EVAL_NAME in deps) {
+    const floor = caretFloor(deps[EVAL_NAME]);
+    const cli = workspaces.find((w) => w.manifest.name === EVAL_NAME)?.manifest.version;
+    if (floor === undefined) {
+      problems.push(`${at}: ${EVAL_NAME} is ${JSON.stringify(deps[EVAL_NAME])}, expected a caret range like "^3.4.0"`);
+    } else if (typeof cli !== "string" || !isVersion(cli)) {
+      problems.push(`${at}: can't compare ${EVAL_NAME} ${JSON.stringify(deps[EVAL_NAME])} with the workspace version ${JSON.stringify(cli)}`);
+    } else if (floor.split(".")[0] !== cli.split(".")[0] || !atMost(floor, cli)) {
+      problems.push(`${at}: ${EVAL_NAME} is "^${floor}", but this repository's ${EVAL_NAME} is ${cli}`);
+    }
+  }
+  return problems;
+}
+
 /** The manifests with `version` set and internal dependency ranges moved to "^version". Doesn't touch disk. */
 export function bumped(workspaces: Workspace[], version: string): Workspace[] {
   if (!isVersion(version)) throw new Error(`${JSON.stringify(version)} is not a version like 1.2.3`);
@@ -228,6 +340,14 @@ export function isPublished(run: RunNpm, name: string, version: string, cwd: str
   throw new Error(`npm view ${name}@${version} failed (exit ${res.status}): ${summary}`);
 }
 
+/** npm publish arguments: public, prereleases under next, and --dry-run if asked. */
+function publishArgs(version: string, dryRun: boolean): string[] {
+  const args = ["publish", "--access", "public"];
+  if (distTag(version) !== "latest") args.push("--tag", distTag(version));
+  if (dryRun) args.push("--dry-run");
+  return args;
+}
+
 export interface PublishOptions {
   root?: string;
   dryRun?: boolean;
@@ -252,9 +372,7 @@ export function publishAll(workspaces: Workspace[], tag: string, run: RunNpm, op
       log(`${name}@${version} is already on npm, skipping`);
       continue;
     }
-    const args = ["publish", "--access", "public"];
-    if (distTag(version) !== "latest") args.push("--tag", distTag(version));
-    if (dryRun) args.push("--dry-run");
+    const args = publishArgs(version, dryRun);
     log(`${dryRun ? "dry run: " : ""}npm ${args.join(" ")}  (${w.dir})`);
     const res = run(args, join(root, w.dir), false);
     if (res.status !== 0) {
@@ -264,6 +382,40 @@ export function publishAll(workspaces: Workspace[], tag: string, run: RunNpm, op
     done.push(name);
   }
   return done;
+}
+
+/**
+ * Publishes the alias for an alias-v* tag, unless that version is already on
+ * the registry. The CLI version its range starts at must already be on npm,
+ * so the alias never points at a release that hasn't gone out. Returns the
+ * names it published.
+ */
+export function publishAlias(
+  alias: Workspace,
+  workspaces: Workspace[],
+  sdkRange: unknown,
+  tag: string,
+  run: RunNpm,
+  options: PublishOptions = {},
+): string[] {
+  const { root = ROOT, dryRun = false, log = console.log } = options;
+  const version = versionFromTag(tag, ALIAS_TAG_PREFIX);
+  const problems = aliasProblems(alias, workspaces, sdkRange, root, version);
+  if (problems.length > 0) throw new Error(`not releasing ${tag}:\n  ${problems.join("\n  ")}`);
+
+  const floor = caretFloor((alias.manifest.dependencies as Record<string, unknown>)[EVAL_NAME]) as string;
+  if (!isPublished(run, EVAL_NAME, floor, root)) {
+    throw new Error(`${ALIAS_NAME}@${version} needs ${EVAL_NAME}@${floor}, which is not on npm`);
+  }
+  if (isPublished(run, ALIAS_NAME, version, root)) {
+    log(`${ALIAS_NAME}@${version} is already on npm, skipping`);
+    return [];
+  }
+  const args = publishArgs(version, dryRun);
+  log(`${dryRun ? "dry run: " : ""}npm ${args.join(" ")}  (${alias.dir})`);
+  const res = run(args, join(root, alias.dir), false);
+  if (res.status !== 0) throw new Error(`npm publish failed for ${ALIAS_NAME}@${version} (exit ${res.status})`);
+  return [ALIAS_NAME];
 }
 
 const runNpm: RunNpm = (args, cwd, capture) => {
@@ -283,10 +435,21 @@ export function main(argv: string[], run: RunNpm = runNpm, root: string = ROOT):
   const [command, arg, ...rest] = argv;
   try {
     const workspaces = readWorkspaces(root);
+    const aliasCheck = (version?: string) => aliasProblems(readAlias(root), workspaces, rootSdkRange(root), root, version);
     if (command === "check" && rest.length === 0) {
-      const problems = releaseProblems(workspaces, arg === undefined ? undefined : versionFromTag(arg));
+      const release = arg === undefined ? undefined : releaseFromTag(arg);
+      const problems =
+        release === undefined
+          ? [...releaseProblems(workspaces), ...aliasCheck()]
+          : release.kind === "alias"
+            ? aliasCheck(release.version)
+            : releaseProblems(workspaces, release.version);
       for (const p of problems) console.error(`error: ${p}`);
-      if (problems.length === 0) console.log(`ok: ${publishable(workspaces).length} packages ready${arg ? ` for ${arg}` : ""}`);
+      if (problems.length === 0) {
+        const packages = `${publishable(workspaces).length} packages`;
+        const what = release === undefined ? `${packages} and the ${ALIAS_NAME} alias` : release.kind === "alias" ? ALIAS_NAME : packages;
+        console.log(`ok: ${what} ready${arg ? ` for ${arg}` : ""}`);
+      }
       return problems.length === 0 ? 0 : 1;
     }
     if (command === "bump" && arg !== undefined && rest.length === 0) {
@@ -298,7 +461,10 @@ export function main(argv: string[], run: RunNpm = runNpm, root: string = ROOT):
     }
     if (command === "publish" && arg !== undefined && (rest.length === 0 || (rest.length === 1 && rest[0] === "--dry-run"))) {
       const dryRun = rest[0] === "--dry-run";
-      const done = publishAll(workspaces, arg, run, { root, dryRun });
+      const done =
+        releaseFromTag(arg).kind === "alias"
+          ? publishAlias(readAlias(root), workspaces, rootSdkRange(root), arg, run, { root, dryRun })
+          : publishAll(workspaces, arg, run, { root, dryRun });
       console.log(`${dryRun ? "would publish" : "published"}: ${done.length > 0 ? done.join(", ") : "nothing new"}`);
       return 0;
     }
