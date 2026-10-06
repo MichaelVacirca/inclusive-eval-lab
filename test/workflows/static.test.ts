@@ -1,7 +1,22 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { type Step, REPO_ROOT, allSteps, fileExists, loadYaml, resolveEnv, workflowFiles } from "./harness";
+import { beforeEach, describe, expect, it } from "vitest";
+import {
+  INJECTION_PAYLOADS,
+  REPO_ROOT,
+  type Sandbox,
+  type Step,
+  allSteps,
+  fileExists,
+  loadYaml,
+  makeSandbox,
+  resolveEnv,
+  runStep,
+  stepNamed,
+  workflowFiles,
+  writeStub,
+} from "./harness";
+import { REPOSITORY_URL, TAG_PREFIX, publishable, readWorkspaces } from "../../scripts/release.mts";
 
 const FILES = [...workflowFiles(), "action/action.yml"];
 const docs = Object.fromEntries(FILES.map((f) => [f, loadYaml(f)]));
@@ -115,46 +130,139 @@ describe.each(FILES)("%s", (file) => {
 });
 
 describe("publish-eval.yml", () => {
-  const doc = docs[".github/workflows/publish-eval.yml"];
+  const file = ".github/workflows/publish-eval.yml";
+  const text = readFileSync(join(REPO_ROOT, file), "utf8");
+  const doc = docs[file];
   const job = doc.jobs.publish;
   const steps: Step[] = job.steps;
+  const setup = steps.find((s) => s.uses?.startsWith("actions/setup-node@"));
 
-  it("only runs for eval-v* tags", () => {
-    expect(doc.on).toEqual({ push: { tags: ["eval-v*"] } });
+  it("only runs for tags with the release script's prefix", () => {
+    expect(doc.on).toEqual({ push: { tags: [`${TAG_PREFIX}*`] } });
   });
 
-  it("gets only the permissions publishing with provenance needs", () => {
+  it("never runs two releases at once or cancels one halfway", () => {
+    expect(doc.concurrency).toEqual({ group: "publish-npm", "cancel-in-progress": false });
+  });
+
+  it("is the only job, in the npm environment, with only the permissions trusted publishing needs", () => {
+    expect(Object.keys(doc.jobs)).toEqual(["publish"]);
+    expect(job.environment).toBe("npm");
     expect(job.permissions).toEqual({ contents: "read", "id-token": "write" });
   });
 
-  it("does not restore a dependency cache in a publishing job", () => {
-    const setup = steps.find((s) => s.uses?.startsWith("actions/setup-node@"));
-    expect(setup?.with?.cache).toBeUndefined();
-    expect(setup?.with?.["cache-dependency-path"]).toBeUndefined();
-    expect(setup?.with?.["registry-url"]).toBe("https://registry.npmjs.org");
+  it("uses no npm token or other secret anywhere", () => {
+    expect(text).not.toMatch(/secrets\.|NODE_AUTH_TOKEN|NPM_TOKEN|_authToken/);
   });
 
-  it("installs from the root lockfile without install scripts, builds, typechecks, then publishes", () => {
-    const runs = steps.filter((s) => s.run).map((s) => s.run?.trim());
-    expect(runs).toEqual([
+  it("checks out full history, without persisting credentials", () => {
+    const checkout = steps.find((s) => s.uses?.startsWith("actions/checkout@"));
+    expect(checkout?.with).toEqual({ "fetch-depth": 0, "persist-credentials": false });
+  });
+
+  it("sets up Node without registry-url (no token placeholder in front of OIDC) and without a dependency cache", () => {
+    expect(setup?.with).toEqual({ "node-version": 26, "package-manager-cache": false });
+  });
+
+  it("checks the tag is on main before installing anything", () => {
+    const names = steps.map((s) => s.name ?? s.uses ?? s.run?.trim());
+    expect(names.indexOf("Check the tag is on main")).toBeLessThan(names.indexOf("npm ci --ignore-scripts"));
+    expect(names.indexOf("Check the tag is on main")).toBeGreaterThan(names.indexOf("actions/checkout@v7"));
+  });
+
+  it("installs without install scripts, checks the tag, builds, typechecks and tests everything, then publishes", () => {
+    expect(steps.filter((s) => s.run && s.name === undefined).map((s) => s.run?.trim())).toEqual([
       "npm ci --ignore-scripts",
+      'node scripts/release.mts check "$GITHUB_REF_NAME"',
       "npm run build",
-      "npm run typecheck -w packages/eval",
-      "npm publish --provenance --access public",
+      "npm run typecheck",
+      "npm test",
+      'node scripts/release.mts publish "$GITHUB_REF_NAME"',
     ]);
+    for (const s of steps) {
+      expect(s.env, s.run ?? s.uses).toBeUndefined();
+      expect(s["working-directory"], s.run ?? s.uses).toBeUndefined();
+    }
   });
 
-  it("publishes from packages/eval with the npm token only in that step", () => {
-    const publish = steps.find((s) => s.run?.startsWith("npm publish"));
-    expect(publish?.["working-directory"]).toBe("packages/eval");
-    expect(publish?.env).toEqual({ NODE_AUTH_TOKEN: "${{ secrets.NPM_TOKEN }}" });
-    for (const s of steps) if (s !== publish) expect(JSON.stringify(s.env ?? {})).not.toContain("NPM_TOKEN");
+  it("is named for the packages it publishes", () => {
+    expect(doc.name).toBe("Publish @inclusive-ai packages");
+    for (const w of readWorkspaces()) expect(String(w.manifest.name)).toMatch(/^@inclusive-ai\//);
+  });
+});
+
+describe("publish-eval.yml: the tag-on-main check", () => {
+  const step = stepNamed(allSteps(docs[".github/workflows/publish-eval.yml"]), "Check the tag is on main");
+  const SHA = "0123456789abcdef0123456789abcdef01234567";
+  let sb: Sandbox;
+  beforeEach(() => {
+    sb = makeSandbox();
+    writeStub(sb, join(sb.bin, "git"), "git");
+  });
+  const run = (gitExit: number, tag = "eval-v3.3.0") =>
+    runStep(sb, step, { GITHUB_SHA: SHA, GITHUB_REF_NAME: tag }, { STUB_EXIT_GIT: String(gitExit) });
+
+  it("asks git whether the tagged commit is an ancestor of origin/main", () => {
+    const r = run(0);
+    expect(r.status).toBe(0);
+    expect(r.calls.map((c) => [c.prog, ...c.argv])).toEqual([["git", "merge-base", "--is-ancestor", SHA, "origin/main"]]);
   });
 
-  it("publishes the package the workflow is named for", () => {
-    const pkg = JSON.parse(readFileSync(join(REPO_ROOT, "packages/eval/package.json"), "utf8"));
-    expect(pkg.name).toBe("@inclusive-ai/eval");
-    expect(doc.name).toBe(`Publish ${pkg.name}`);
+  it.each([1, 128])("fails with an error naming the tag when git says no (exit %i)", (code) => {
+    const r = run(code);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("::error::eval-v3.3.0 is not on main. Tag a commit that has been merged.");
+  });
+
+  it("never runs the tag name as a command", () => {
+    for (const payload of Object.values(INJECTION_PAYLOADS)) {
+      const r = run(1, `eval-v${payload}`);
+      expect(r.created).toEqual([]);
+      expect(r.status).toBe(1);
+    }
+  });
+});
+
+describe("docs/releasing.md", () => {
+  const guide = readFileSync(join(REPO_ROOT, "docs/releasing.md"), "utf8");
+
+  it("lists every published package with its directory", () => {
+    for (const w of publishable(readWorkspaces())) {
+      expect(guide, String(w.manifest.name)).toContain(`| \`${String(w.manifest.name)}\` | \`${w.dir}\` |`);
+    }
+  });
+
+  it("gives the trusted-publisher settings npm will check", () => {
+    const repo = /github\.com\/([^/]+)\/([^/.]+)\.git$/.exec(REPOSITORY_URL);
+    expect(guide).toContain(`**Organization or user:** \`${repo?.[1]}\``);
+    expect(guide).toContain(`**Repository:** \`${repo?.[2]}\``);
+    expect(guide).toContain("**Workflow filename:** `publish-eval.yml`");
+    expect(guide).toContain(`**Environment name:** \`${docs[".github/workflows/publish-eval.yml"].jobs.publish.environment}\``);
+    expect(guide).toContain("`npm publish`");
+  });
+
+  it("uses the tag prefix the workflow is triggered by", () => {
+    expect(guide).toContain(`git push origin ${TAG_PREFIX}`);
+  });
+
+  it("protects the environment and the release tags before the first release", () => {
+    expect(guide).toContain("**Required reviewers:**");
+    expect(guide).toContain(`pattern \`${TAG_PREFIX}*\``);
+    expect(guide).toContain(`tag ruleset**, targeting tags matching \`${TAG_PREFIX}*\``);
+    expect(guide.indexOf("### 1. GitHub")).toBeLessThan(guide.indexOf("### 2. npm"));
+  });
+
+  it("gives an npm trust command that covers every package with the same settings", () => {
+    const loop = /for pkg in ([^;]+); do\n\s+npm trust github "@inclusive-ai\/\$pkg" (.+)\ndone/.exec(guide);
+    expect(loop).not.toBeNull();
+    const short = publishable(readWorkspaces()).map((w) => String(w.manifest.name).replace("@inclusive-ai/", ""));
+    expect(loop?.[1].split(" ").sort()).toEqual(short.sort());
+    expect(loop?.[2]).toBe("--file publish-eval.yml --repo MichaelVacirca/inclusive-eval-lab --env npm --allow-publish");
+  });
+
+  it("retires token publishing once trusted publishing works", () => {
+    expect(guide).toContain('"Require two-factor authentication and disallow tokens"');
+    expect(guide).toContain("Delete the old `NPM_TOKEN` repository secret");
   });
 });
 
@@ -175,6 +283,10 @@ describe("ci.yml", () => {
 
   it.each(["build", "test", "typecheck"])("runs %s for every workspace", (script) => {
     for (const w of workspaces) expect(ci, `npm run ${script} -w ${w}`).toContain(`npm run ${script} -w ${w}\n`);
+  });
+
+  it("checks the packages are ready to release on every change", () => {
+    expect(ci).toContain("node scripts/release.mts check\n");
   });
 
   it("runs these workflow tests and their typecheck", () => {

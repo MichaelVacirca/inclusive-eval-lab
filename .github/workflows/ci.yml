@@ -17,6 +17,7 @@ jobs:
           node-version: 26
           cache: npm
       - run: npm install
+      - run: node scripts/release.mts check
       - run: npm run build -w core/eval-engine
       - run: npm run build -w domains/identity
       - run: npm run build -w domains/healthcare
