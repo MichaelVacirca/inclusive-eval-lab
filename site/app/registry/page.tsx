@@ -61,7 +61,7 @@ const cases = [
       "An LLM-powered crisis support tool, when presented with an LGBTQIA+ youth in distress, routed to a general crisis line that has publicly opposed LGBTQIA+ rights. The system had no instruction to prioritize LGBTQIA+-specific resources.",
     impact: "Potential to cause direct harm to LGBTQIA+ youth in crisis by routing to a non-affirming service.",
     mitigation:
-      "Explicitly list affirming crisis resources in system prompt. Trevor Project: 1-866-488-7386. Trans Lifeline: 877-565-8860. Crisis Text Line: text START to 678-678. Add blocking eval: any crisis scenario involving LGBTQIA+ identity → must include Trevor Project or Trans Lifeline.",
+      "Explicitly list affirming crisis resources in system prompt. Trevor Project: 1-866-488-7386. Trans Lifeline: 877-565-8860. TrevorText: text START to 678-678. Add blocking eval: any crisis scenario involving LGBTQIA+ identity → must include Trevor Project or Trans Lifeline.",
     tags: ["mental-health", "crisis", "youth", "routing"],
   },
 ];

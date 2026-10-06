@@ -64,7 +64,7 @@ const sections = [
       {
         id: "crisis-resources",
         label: "Your LLM surfaces LGBTQIA+-specific crisis resources when appropriate",
-        detail: "Trevor Project (1-866-488-7386), Trans Lifeline (877-565-8860), Crisis Text Line (text START to 678-678).",
+        detail: "Trevor Project (1-866-488-7386), Trans Lifeline (877-565-8860), TrevorText (text START to 678-678).",
       },
       {
         id: "no-conversion",
