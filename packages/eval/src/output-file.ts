@@ -10,17 +10,32 @@ export function checkOutputPath(path: string | undefined): string | undefined {
     return "--output needs a file path, e.g. --output results.json";
   }
   const full = resolve(path);
+  let exists = false;
   try {
     if (statSync(full).isDirectory()) {
       return `--output ${path} is a directory, not a file`;
     }
+    exists = true;
   } catch {
     // The file does not exist yet, which is fine.
   }
+  if (exists) {
+    // An existing file is overwritten in place, so only the file itself must be writable.
+    try {
+      accessSync(full, constants.W_OK);
+    } catch {
+      return `--output file ${full} is not writable`;
+    }
+    return undefined;
+  }
+  const dir = dirname(full);
   try {
-    accessSync(dirname(full), constants.W_OK);
+    if (!statSync(dir).isDirectory()) {
+      return `--output ${dir} is a file, not a directory`;
+    }
+    accessSync(dir, constants.W_OK);
   } catch {
-    return `--output directory ${dirname(full)} does not exist or is not writable`;
+    return `--output directory ${dir} does not exist or is not writable`;
   }
   return undefined;
 }

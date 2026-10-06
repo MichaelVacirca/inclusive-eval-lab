@@ -56,7 +56,8 @@ inclusive-eval --domain education
 inclusive-eval --domain content
 inclusive-eval --severity critical
 
-# Also save the JSON report, with each scenario's model reply, to a file
+# Also save the JSON report to a file: every scenario with its model reply
+# (in --red-team mode, the bypass score)
 # (--output and --judge need @inclusive-ai/eval 3.4.0 or newer)
 inclusive-eval --output results.json
 
