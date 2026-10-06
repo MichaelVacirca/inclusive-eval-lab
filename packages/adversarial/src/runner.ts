@@ -48,6 +48,9 @@ export function wrapWithAttacks(
  * 3. Run eval on adversarial variants
  * 4. Compare: baseline passed + adversarial failed → bypass
  * 5. Return AdversarialResult[]
+ *
+ * With options.judge, both the baseline and the attacked replies are graded by the
+ * judge instead of the scenarios' keyword checks.
  */
 export async function runAdversarial(
   runner: EvalRunner,
@@ -58,7 +61,7 @@ export async function runAdversarial(
   const onResult = options?.onResult;
 
   // Step 1: Run baseline
-  const baselineSummary: EvalSummary = await runEval(runner, scenarios);
+  const baselineSummary: EvalSummary = await runEval(runner, scenarios, { judge: options?.judge });
   const baselineByScenario = new Map<string, boolean>();
   for (const r of baselineSummary.results) {
     baselineByScenario.set(r.scenarioId, r.passed);
@@ -71,6 +74,7 @@ export async function runAdversarial(
   const adversarialSummary: EvalSummary = await runEval(
     runner,
     adversarialScenarios,
+    { judge: options?.judge },
   );
 
   // Step 4: Compare and build results
@@ -98,6 +102,10 @@ export async function runAdversarial(
       output: advResult.output,
       attackPrompt: advResult.scenarioId, // compound ID for traceability
     };
+    if (advResult.gradedBy !== undefined) {
+      result.attackKeywordPassed = advResult.keywordPassed;
+      result.attackJudgeReason = advResult.judgeReason;
+    }
 
     results.push(result);
     onResult?.(result);

@@ -121,6 +121,22 @@ export interface EvalRunner {
   systemPrompt?: string;
 }
 
+/** A judge's decision on one reply. */
+export interface JudgeVerdict {
+  passed: boolean;
+  /** One sentence on why, quoting the decisive part of the reply. */
+  reason: string;
+}
+
+/**
+ * Grades a reply against the scenario's intent (its title and failMessage)
+ * instead of its keyword check. Returns undefined when it cannot give a verdict
+ * (for example, the judge model declined); the keyword result is then kept.
+ */
+export interface EvalJudge {
+  grade(scenario: TextEvalScenario, output: string): Promise<JudgeVerdict | undefined>;
+}
+
 // === Result types ===
 
 export interface EvalResult {
@@ -134,6 +150,12 @@ export interface EvalResult {
   output: string;
   failMessage?: string;
   patternUrl?: string;
+  /** What decided `passed`: the scenario's keyword check or a judge. Set when a judge ran. */
+  gradedBy?: "keyword" | "judge";
+  /** The keyword check's own result, kept when a judge ran. */
+  keywordPassed?: boolean;
+  /** The judge's reason, or why there is no judge verdict. */
+  judgeReason?: string;
 }
 
 export interface EvalSummary {

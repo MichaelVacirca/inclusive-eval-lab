@@ -56,8 +56,22 @@ inclusive-eval --domain education
 inclusive-eval --domain content
 inclusive-eval --severity critical
 
+# Also save the JSON report, with each scenario's model reply, to a file
+# (--output and --judge need @inclusive-ai/eval 3.4.0 or newer)
+inclusive-eval --output results.json
+
+# Grade replies with an LLM judge instead of keyword checks (one extra API call
+# per scenario; default judge claude-opus-5-5, or gpt-4.1 with OPENAI_API_KEY).
+# The Claude judge needs @anthropic-ai/sdk 0.131 or newer.
+inclusive-eval --judge
+inclusive-eval --judge-model claude-sonnet-5-5
+
 # Red-team your system prompt with 15 attack templates
 ANTHROPIC_API_KEY=sk-... npx inclusive-eval --red-team
+
+# Red-team with the judge (one judge call per attack and baseline: 16 per
+# scenario, so narrow it with --domain or --category)
+ANTHROPIC_API_KEY=sk-... npx inclusive-eval --red-team --judge --domain healthcare
 
 # Run 30 adversarial jailbreak scenarios
 ANTHROPIC_API_KEY=sk-... npx inclusive-eval --adversarial

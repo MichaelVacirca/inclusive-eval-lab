@@ -14,7 +14,7 @@
     "typecheck:workflows": "tsc -p test/workflows"
   },
   "devDependencies": {
-    "@anthropic-ai/sdk": "^0.78.0",
+    "@anthropic-ai/sdk": "^0.131.0",
     "@types/node": "^22.0.0",
     "typescript": "^5.0.0",
     "vitest": "^3.0.0",

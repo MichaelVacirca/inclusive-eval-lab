@@ -25,7 +25,7 @@ LGBTQIA+ users are first-class users. Every prompt, output, form field, and data
 - Any product with emotional support or mental health features must include:
   - Trevor Project: 1-866-488-7386 (LGBTQIA+ youth crisis line)
   - Trans Lifeline: 877-565-8860 (trans-specific support)
-  - Crisis Text Line: text START to 678-678
+  - TrevorText: text START to 678-678 (LGBTQIA+ youth)
 - Crisis routing logic must not rely solely on generic resources for users who disclose LGBTQIA+ identity in distress
 
 ### Content moderation

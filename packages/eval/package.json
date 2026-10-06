@@ -8,6 +8,7 @@
     "url": "git+https://github.com/MichaelVacirca/inclusive-eval-lab.git",
     "directory": "packages/eval"
   },
+  "homepage": "https://github.com/InclusiveCode/inclusive-ai#readme",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
